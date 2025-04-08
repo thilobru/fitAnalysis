@@ -1,0 +1,20 @@
+# Git / IDE / OS files
+.git/
+.gitignore
+.dockerignore
+README.md
+Dockerfile
+.vscode/
+.idea/
+*.pyc
+__pycache__/
+
+# Python virtual environment
+venv/
+*.venv/
+
+# Local FIT files (should be mounted via volume)
+fitfiles/
+
+# GitHub Actions workflow
+.github/
