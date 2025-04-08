@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FIT File Power Curve Analyzer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <style>
+        body { font-family: sans-serif; }
+        .chart-container {
+            position: relative;
+            margin: 2rem auto; /* Add some margin */
+            height: 60vh;
+            width: 80vw;
+            max-width: 900px;
+        }
+        /* Style for loading/error messages */
+        #statusMessage {
+            min-height: 2em; /* Reserve space */
+            text-align: center;
+            margin-top: 1rem;
+            font-weight: bold;
+        }
+        /* Basic button styling */
+        button { transition: background-color 0.2s ease; }
+    </style>
+</head>
+<body class="bg-gray-100 p-4 md:p-8">
+
+    <h1 class="text-2xl md:text-3xl font-bold text-center mb-6 text-gray-800">Power Curve Analyzer</h1>
+
+    <div class="max-w-xl mx-auto bg-white p-6 rounded-lg shadow-md mb-8">
+        <h2 class="text-xl font-semibold mb-4 text-gray-700">Select Date Range</h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+            <div>
+                <label for="startDate" class="block text-sm font-medium text-gray-600 mb-1">Start Date:</label>
+                <input type="date" id="startDate" name="startDate" required
+                       class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+            </div>
+            <div>
+                <label for="endDate" class="block text-sm font-medium text-gray-600 mb-1">End Date:</label>
+                <input type="date" id="endDate" name="endDate" required
+                       class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+            </div>
+            <button id="generateButton"
+                    class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md shadow focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                Generate Power Curve
+            </button>
+        </div>
+         <div id="statusMessage" class="mt-4 text-center text-red-600 font-semibold"></div>
+    </div>
+
+    <div class="chart-container bg-white p-4 rounded-lg shadow-md">
+        <canvas id="powerCurveChart"></canvas>
+    </div>
+
+    <script>
+        let powerCurveChart = null; // Variable to hold the chart instance
+
+        // Function to initialize or update the chart
+        function displayChart(powerData) {
+            const ctx = document.getElementById('powerCurveChart').getContext('2d');
+            setStatusMessage(''); // Clear status message on success
+
+            // Prepare data for Chart.js
+            // Sort keys (durations) numerically before creating labels/data
+            const sortedDurations = Object.keys(powerData).map(Number).sort((a, b) => a - b);
+            const labels = sortedDurations.map(String); // X-axis labels (seconds)
+            const dataPoints = sortedDurations.map(duration => powerData[duration.toString()]); // Y-axis values (watts)
+
+
+            const chartConfig = {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Max Average Power',
+                        data: dataPoints,
+                        borderColor: 'rgb(75, 192, 192)',
+                        backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                        tension: 0.1,
+                        fill: false,
+                        pointRadius: 3,
+                        pointHoverRadius: 5
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            type: 'logarithmic',
+                            title: { display: true, text: 'Duration (seconds)', font: { size: 14 } },
+                            ticks: {
+                                 callback: function(value, index, values) {
+                                    const commonTicks = [1, 5, 10, 30, 60, 300, 600, 1200, 1800, 3600, 5400];
+                                    const numericValue = Number(this.getLabelForValue(value));
+                                    // Only show labels for common ticks or powers of 10 for clarity
+                                    if (commonTicks.includes(numericValue) || Math.log10(numericValue) % 1 === 0) {
+                                        return numericValue + 's';
+                                    }
+                                    return null;
+                                 },
+                                 autoSkip: false,
+                                 maxRotation: 45,
+                                 minRotation: 0
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            title: { display: true, text: 'Max Average Power (watts)', font: { size: 14 } }
+                        }
+                    },
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                title: function(tooltipItems) { return 'Duration: ' + tooltipItems[0].label + 's'; },
+                                label: function(tooltipItem) { return 'Max Avg Power: ' + tooltipItem.raw + ' W'; }
+                            }
+                        },
+                        legend: { display: true, position: 'top' }
+                    }
+                }
+            };
+
+            // If chart already exists, update it; otherwise, create it
+            if (powerCurveChart) {
+                powerCurveChart.data.labels = labels;
+                powerCurveChart.data.datasets[0].data = dataPoints;
+                powerCurveChart.update();
+                console.log("Chart updated.");
+            } else {
+                powerCurveChart = new Chart(ctx, chartConfig);
+                console.log("Chart created.");
+            }
+        }
+
+        // Function to display status/error messages
+        function setStatusMessage(message, isError = false) {
+            const statusElement = document.getElementById('statusMessage');
+            statusElement.textContent = message;
+            statusElement.className = `mt-4 text-center font-semibold ${isError ? 'text-red-600' : 'text-green-600'}`;
+        }
+
+        // Event listener for the button
+        document.getElementById('generateButton').addEventListener('click', async () => {
+            const startDate = document.getElementById('startDate').value;
+            const endDate = document.getElementById('endDate').value;
+
+            if (!startDate || !endDate) {
+                setStatusMessage('Please select both a start and end date.', true);
+                return;
+            }
+
+            // Basic date validation: ensure start <= end
+            if (new Date(startDate) > new Date(endDate)) {
+                 setStatusMessage('Start date cannot be after end date.', true);
+                 return;
+            }
+
+
+            setStatusMessage('Generating power curve...', false); // Show loading message
+            document.getElementById('generateButton').disabled = true; // Disable button during fetch
+
+            try {
+                const response = await fetch('/api/powercurve', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ startDate, endDate }),
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    // Handle HTTP errors (like 404, 500)
+                    throw new Error(result.error || `HTTP error! status: ${response.status}`);
+                }
+
+                // Check if the result object is empty (meaning no valid data)
+                if (Object.keys(result).length === 0) {
+                    setStatusMessage('No valid power data found for the selected date range.', true);
+                     // Optionally clear the chart if it exists
+                     if (powerCurveChart) {
+                         powerCurveChart.destroy();
+                         powerCurveChart = null;
+                         // Re-get context if needed for future charts
+                         // const ctx = document.getElementById('powerCurveChart').getContext('2d');
+                     }
+                } else {
+                   displayChart(result); // Display the chart with received data
+                }
+
+            } catch (error) {
+                console.error('Error fetching or processing power curve:', error);
+                setStatusMessage(`Error: ${error.message}`, true);
+                 // Optionally clear the chart on error
+                 if (powerCurveChart) {
+                     powerCurveChart.destroy();
+                     powerCurveChart = null;
+                 }
+            } finally {
+                 document.getElementById('generateButton').disabled = false; // Re-enable button
+            }
+        });
+
+         // Set default dates (e.g., start of year to today)
+         window.addEventListener('load', () => {
+            const today = new Date().toISOString().split('T')[0];
+            const startOfYear = new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0];
+            document.getElementById('startDate').value = startOfYear;
+            document.getElementById('endDate').value = today;
+            // Optionally trigger generation on load? Or wait for user click.
+            // document.getElementById('generateButton').click();
+        });
+
+    </script>
+
+</body>
+</html>
