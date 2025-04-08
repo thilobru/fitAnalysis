@@ -1,42 +1,66 @@
-# Use an official Python runtime as a parent image
-# Using a specific version and the 'slim' variant reduces image size
+# --- Stage 1: Builder ---
+# Use a specific Python version slim image as the base for building
+FROM python:3.10-slim as builder
+
+# Set working directory
+WORKDIR /opt/builder
+
+# Install build dependencies if necessary (e.g., gcc for some packages)
+# RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements file
+COPY requirements.txt .
+
+# Install dependencies into a target directory
+# Using --no-cache-dir and --prefix helps keep layers smaller and separates packages
+# Note: Using --target or --prefix might require adjusting PYTHONPATH later
+# Simpler alternative: Install normally, then copy site-packages in next stage
+RUN pip wheel --no-cache-dir --wheel-dir=/opt/wheels -r requirements.txt \
+    && pip install --no-cache-dir --no-index --find-links=/opt/wheels -r requirements.txt
+
+# --- Stage 2: Final Application Image ---
+# Use the same slim base image for the final stage
 FROM python:3.10-slim
 
 # Set environment variables
-# Prevents Python from buffering stdout and stderr (good for logs)
-ENV PYTHONUNBUFFERED=1
-# Set the Flask application entry point (though Gunicorn overrides this)
-# ENV FLASK_APP=app.py
-# Set the working directory in the container
-WORKDIR /app
+ENV PYTHONUNBUFFERED=1 \
+    # Set default FIT directory path inside container
+    FIT_ANALYZER_FIT_DIR=/app/fitfiles \
+    # Set default host/port for Flask/Gunicorn (can be overridden)
+    FIT_ANALYZER_HOST=0.0.0.0 \
+    FIT_ANALYZER_PORT=5000 \
+    # Gunicorn specific settings (can also be set via CMD)
+    WORKERS=2
 
-# Install system dependencies that might be needed by pandas or other libraries
-# (Example: build-essential might be needed for some packages)
-# Adjust as necessary based on runtime errors
-# RUN apt-get update && apt-get install -y --no-install-recommends \
-#    build-essential \
-#    && rm -rf /var/lib/apt/lists/*
+# Create a non-root user and group
+RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 
-# Copy just the requirements file first to leverage Docker cache
-COPY requirements.txt .
-
-# Install Python dependencies
-# --no-cache-dir reduces image size by not storing the pip cache
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy the rest of the application code into the container
-# This includes app.py and the templates/ directory
-COPY . .
-
-# Create the directory for FIT files mount point inside the container
-# This directory will be typically mounted over using a Docker volume
+# Create the application directory and the mount point for FIT files
 RUN mkdir -p /app/fitfiles
 
-# Expose the port the app runs on (Gunicorn will bind to this port)
-EXPOSE 5000
+# Set the working directory
+WORKDIR /app
+
+# Copy installed dependencies from the builder stage
+# This location might vary slightly depending on Python version/base image
+COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
+# Copy Gunicorn executable (location might vary) - ensure it's found
+COPY --from=builder /usr/local/bin/gunicorn /usr/local/bin/gunicorn
+
+# Copy application code (app.py, templates/)
+COPY app.py .
+COPY templates ./templates
+
+# Change ownership of the app directory and mount point to the non-root user
+# Ensure the user can write logs if logging to files, or adjust permissions
+RUN chown -R appuser:appgroup /app
+
+# Switch to the non-root user
+USER appuser
+
+# Expose the port the app runs on
+EXPOSE ${FIT_ANALYZER_PORT}
 
 # Define the command to run the application using Gunicorn
-# --workers: Number of worker processes (adjust based on CPU cores, e.g., 2 * cores + 1)
-# --bind 0.0.0.0:5000: Makes the app accessible from outside the container on the exposed port
-# app:app: Tells Gunicorn to run the 'app' instance found in the 'app.py' module
-CMD ["gunicorn", "--workers", "2", "--bind", "0.0.0.0:5000", "app:app"]
+# Reads host/port/workers from environment variables set above
+CMD ["gunicorn", "--workers", "$WORKERS", "--bind", "$FIT_ANALYZER_HOST:$FIT_ANALYZER_PORT", "app:app"]
