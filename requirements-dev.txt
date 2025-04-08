@@ -1,0 +1,8 @@
+# Testing framework
+pytest
+
+# Mocking library (useful extension for pytest)
+pytest-mock
+
+# Include main requirements as well for the test environment
+-r requirements.txt
