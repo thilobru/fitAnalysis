@@ -22,9 +22,9 @@ A web application to analyze `.fit` files, specifically focusing on calculating 
 This is the easiest way to run the application.
 
 1.  **Pull the Docker Image:**
-    Replace `your-github-username` with your actual GitHub username or organization name where the repository lives. Replace `latest` with a specific version tag if needed.
+    Replace `latest` with a specific version tag if needed.
     ```bash
-    docker pull ghcr.io/your-github-username/fit_analyzer:latest
+    docker pull ghcr.io/thilobru/fit_analyzer:latest
     ```
 
 2.  **Prepare FIT Files Directory:**
@@ -65,7 +65,7 @@ If you want to run the code directly without Docker for development:
 
 1.  **Clone the Repository:**
     ```bash
-    git clone [https://github.com/your-github-username/fit_analyzer.git](https://www.google.com/search?q=https://github.com/your-github-username/fit_analyzer.git)
+    git clone [https://github.com/thilobru/fit_analyzer.git](https://www.google.com/search?q=https://github.com/thilobru/fit_analyzer.git)
     cd fit_analyzer
     ```
 2.  **Create Virtual Environment:**
