@@ -1,0 +1,22 @@
+# Python virtual environment
+venv/
+*.venv/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE / OS specific
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# Local data files (should not be committed)
+fitfiles/
+experiments/
+
+# Optional: Sensitive config files (if any)
+# config.ini
+# .env
