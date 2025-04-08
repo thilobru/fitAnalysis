@@ -1,8 +1,11 @@
-# Testing framework
+# Testing framework & extensions
 pytest
-
-# Mocking library (useful extension for pytest)
 pytest-mock
+pytest-cov
+
+# Static analysis & Linting/Formatting
+mypy
+ruff
 
 # Include main requirements as well for the test environment
 -r requirements.txt
