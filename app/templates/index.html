@@ -126,13 +126,14 @@
 
             <section class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
                 <div class="bg-white p-6 rounded-lg shadow-md">
-                    <h2 class="text-xl font-semibold mb-4 text-gray-700">Upload FIT File</h2>
+                    <h2 class="text-xl font-semibold mb-4 text-gray-700">Upload FIT Files</h2>
                     <form id="uploadForm">
                         <div class="mb-4">
-                            <label for="fileInput" class="block text-sm font-medium text-gray-600 mb-1">Select .fit file:</label>
-                            <input type="file" id="fileInput" name="file" accept=".fit" required class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                            <label for="fileInput" class="block text-sm font-medium text-gray-600 mb-1">Select .fit file(s):</label>
+                            <input type="file" id="fileInput" name="file" accept=".fit" required multiple
+                                   class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
                         </div>
-                        <button type="submit" id="uploadButton" class="btn-primary w-full">Upload File</button>
+                        <button type="submit" id="uploadButton" class="btn-primary w-full">Upload Selected Files</button>
                         <div id="uploadStatusMessage" class="status-message"></div>
                     </form>
                 </div>
@@ -249,6 +250,8 @@
                 showLoginButton.classList.remove('hidden');
                 showRegisterButton.classList.remove('hidden');
                 // Keep login/register sections hidden unless explicitly shown
+                loginSection.classList.add('hidden'); // Ensure hidden on logout
+                registerSection.classList.add('hidden'); // Ensure hidden on logout
                 loggedInContent.classList.add('hidden');
                 if (powerCurveChart) { // Destroy chart if logged out
                     powerCurveChart.destroy();
@@ -276,7 +279,10 @@
             try {
                 const response = await fetch('/api/status');
                 if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    // Don't throw error here, just assume logged out if status fails
+                    console.warn(`Login status check failed: ${response.status}`);
+                    updateUI(false);
+                    return;
                 }
                 const data = await response.json();
                 updateUI(data.logged_in, data.user?.username);
@@ -308,6 +314,7 @@
                     throw new Error(result.error || `Login failed (status ${response.status})`);
                 }
                 setStatusMessage(loginStatusMessage, 'Login successful!', 'success');
+                loginForm.reset(); // Clear form
                 setTimeout(() => { // Give time to see message
                     loginSection.classList.add('hidden');
                     setStatusMessage(loginStatusMessage, '', 'clear'); // Clear message
@@ -368,18 +375,22 @@
             try {
                 const response = await fetch('/api/logout', { method: 'POST' });
                 if (!response.ok) {
-                    throw new Error(`Logout failed (status ${response.status})`);
+                    // Attempt to handle potential expired session gracefully
+                    console.warn(`Logout failed (status ${response.status}), assuming session expired.`);
                 }
-                // No need for success message, UI update is enough
-                updateUI(false); // Update UI to logged-out state
-                // Optionally clear other status messages
+                // Always update UI to logged out state regardless of response
+                updateUI(false);
+                // Clear status messages
+                setStatusMessage(loginStatusMessage, '', 'clear');
+                setStatusMessage(registerStatusMessage, '', 'clear');
                 setStatusMessage(uploadStatusMessage, '', 'clear');
                 setStatusMessage(fileListStatusMessage, '', 'clear');
                 setStatusMessage(powerCurveStatusMessage, '', 'clear');
 
             } catch (error) {
                 console.error('Logout error:', error);
-                // Show error somewhere appropriate if needed
+                // Update UI even if network error occurs
+                updateUI(false);
             }
         }
 
@@ -419,7 +430,7 @@
 
                         const deleteButton = document.createElement('button');
                         deleteButton.textContent = 'Delete';
-                        deleteButton.className = 'btn-danger text-xs px-2 py-1';
+                        deleteButton.className = 'btn-danger text-xs px-2 py-1 ml-2'; // Added margin
                         deleteButton.onclick = () => handleFileDelete(file.id, file.filename);
 
                         div.appendChild(infoSpan);
@@ -431,55 +442,96 @@
             } catch (error) {
                 console.error('Error fetching files:', error);
                 setStatusMessage(fileListStatusMessage, 'Could not load file list.', 'error');
-                fileListContainer.appendChild(fileListPlaceholder); // Show placeholder on error
+                // Ensure placeholder exists before trying to append/show it
+                if (!fileListContainer.contains(fileListPlaceholder)) {
+                     fileListContainer.appendChild(fileListPlaceholder);
+                }
                 fileListPlaceholder.classList.remove('hidden');
                 fileListPlaceholder.textContent = 'Error loading files.';
             }
         }
 
         /**
-         * Handles the file upload form submission.
+         * Handles the file upload form submission for multiple files.
          * @param {Event} event - The form submission event.
          */
         async function handleFileUpload(event) {
             event.preventDefault();
-            if (!fileInput.files || fileInput.files.length === 0) {
-                setStatusMessage(uploadStatusMessage, 'Please select a file to upload.', 'error');
+            const files = fileInput.files; // Get the FileList object
+
+            if (!files || files.length === 0) {
+                setStatusMessage(uploadStatusMessage, 'Please select one or more files to upload.', 'error');
                 return;
             }
 
-            const file = fileInput.files[0];
-            if (!file.name.toLowerCase().endsWith('.fit')) {
-                 setStatusMessage(uploadStatusMessage, 'Only .fit files are allowed.', 'error');
-                 return;
-            }
-
-            const formData = new FormData();
-            formData.append('file', file);
-
-            setStatusMessage(uploadStatusMessage, 'Uploading...', 'info');
             const uploadButton = document.getElementById('uploadButton');
             uploadButton.disabled = true;
+            let successCount = 0;
+            let errorCount = 0;
+            const totalFiles = files.length;
 
-            try {
-                const response = await fetch('/api/files', {
-                    method: 'POST',
-                    body: formData, // No Content-Type header needed for FormData
-                });
-                const result = await response.json();
-                if (!response.ok) {
-                    throw new Error(result.error || `Upload failed (status ${response.status})`);
+            setStatusMessage(uploadStatusMessage, `Starting upload of ${totalFiles} file(s)...`, 'info');
+
+            // Use Promise.allSettled to wait for all uploads to finish (success or fail)
+            const uploadPromises = [];
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+
+                if (!file.name.toLowerCase().endsWith('.fit')) {
+                    console.warn(`Skipping non-FIT file: ${file.name}`);
+                    errorCount++; // Count skipped files as errors for summary
+                    setStatusMessage(uploadStatusMessage, `Uploading ${i + 1}/${totalFiles}... Skipping non-FIT file: ${file.name}`, 'info');
+                    continue; // Skip non-.fit files
                 }
-                setStatusMessage(uploadStatusMessage, `File '${result.file.filename}' uploaded successfully!`, 'success');
-                uploadForm.reset(); // Clear the form
-                fetchAndDisplayFiles(); // Refresh the file list
-            } catch (error) {
-                console.error('Upload error:', error);
-                setStatusMessage(uploadStatusMessage, error.message, 'error');
-            } finally {
-                uploadButton.disabled = false;
+
+                const formData = new FormData();
+                formData.append('file', file);
+
+                // Create a promise for each upload request
+                const uploadPromise = fetch('/api/files', {
+                    method: 'POST',
+                    body: formData,
+                })
+                .then(async response => {
+                    const result = await response.json().catch(() => ({})); // Handle non-JSON responses gracefully
+                    if (!response.ok) {
+                        // Throw an error to be caught by .catch()
+                        throw new Error(result.error || `Upload failed for ${file.name} (status ${response.status})`);
+                    }
+                    // Log success for this file
+                    console.log(`Successfully uploaded ${file.name}`);
+                    successCount++;
+                    // Update progress message (optional)
+                    setStatusMessage(uploadStatusMessage, `Uploading ${i + 1}/${totalFiles}... Success: ${file.name}`, 'info');
+                    return { success: true, filename: file.name };
+                })
+                .catch(error => {
+                    // Log error for this file
+                    console.error(`Upload error for ${file.name}:`, error);
+                    errorCount++;
+                    // Update progress message (optional)
+                    setStatusMessage(uploadStatusMessage, `Uploading ${i + 1}/${totalFiles}... Error: ${file.name}`, 'info');
+                    return { success: false, filename: file.name, error: error.message };
+                });
+
+                uploadPromises.push(uploadPromise);
+
+                // Optional: Add a small delay between requests if needed
+                // await new Promise(resolve => setTimeout(resolve, 100));
             }
+
+            // Wait for all uploads to complete
+            await Promise.allSettled(uploadPromises);
+
+            // Final status message
+            let finalMessage = `Upload complete. ${successCount} succeeded, ${errorCount} failed/skipped.`;
+            setStatusMessage(uploadStatusMessage, finalMessage, errorCount > 0 ? 'error' : 'success');
+
+            uploadForm.reset(); // Clear the form input
+            uploadButton.disabled = false;
+            fetchAndDisplayFiles(); // Refresh the file list after all uploads are done
         }
+
 
         /**
          * Handles the deletion of a file.
@@ -517,11 +569,11 @@
             const endDate = endDateInput.value;
 
             if (!startDate || !endDate) {
-                setStatusMessage(powerCurveStatusMessage, 'Please select both a start and end date.', true);
+                setStatusMessage(powerCurveStatusMessage, 'Please select both a start and end date.', 'error');
                 return;
             }
             if (new Date(startDate) > new Date(endDate)) {
-                 setStatusMessage(powerCurveStatusMessage, 'Start date cannot be after end date.', true);
+                 setStatusMessage(powerCurveStatusMessage, 'Start date cannot be after end date.', 'error');
                  return;
             }
 
@@ -601,6 +653,8 @@
                                     const commonTicks = [1, 5, 10, 30, 60, 300, 600, 1200, 1800, 3600, 5400];
                                     const numericValue = Number(this.getLabelForValue(value));
                                     if (commonTicks.includes(numericValue) || Math.log10(numericValue) % 1 === 0) {
+                                        // Avoid showing ticks too close together on log scale if needed
+                                        // Example: only show if significantly different from previous tick
                                         return numericValue + 's';
                                     }
                                     return null;
@@ -656,7 +710,7 @@
             loginForm.addEventListener('submit', handleLogin);
             registerForm.addEventListener('submit', handleRegister);
             logoutButton.addEventListener('click', handleLogout);
-            uploadForm.addEventListener('submit', handleFileUpload);
+            uploadForm.addEventListener('submit', handleFileUpload); // Changed to handle multiple
             generateButton.addEventListener('click', handleGeneratePowerCurve);
         });
 
