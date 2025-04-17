@@ -1,10 +1,10 @@
 import pytest
 import pandas as pd
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
-# Import the internal function we want to test from your Flask app file
-from app import _perform_power_curve_calculation, RecordData, PowerCurveData
+# ** CHANGE: Import from app.services now **
+from app.services import _perform_power_curve_calculation, RecordData, PowerCurveData
 
 # Use pytest's approx for comparing floating point numbers
 from pytest import approx
@@ -77,7 +77,8 @@ def test_perform_power_curve_empty():
 def test_perform_power_curve_invalid_data():
     """Test with data containing non-numeric power or invalid timestamps."""
     start_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-    invalid_records: List[Dict[str, Any]] = [ # Use Any for mixed types before cleaning
+    # Use Any for mixed types before cleaning
+    invalid_records: List[Dict[str, Any]] = [
         {'timestamp': start_time + timedelta(seconds=0), 'power': 100},
         {'timestamp': start_time + timedelta(seconds=1), 'power': 'invalid'},
         {'timestamp': None, 'power': 150},
