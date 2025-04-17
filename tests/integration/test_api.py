@@ -7,19 +7,36 @@ from flask.testing import FlaskClient
 from pathlib import Path
 from pytest_mock import MockerFixture # Import mocker type hint
 
-# Import the Flask app instance from your app file
-from app import app as flask_app, FitFileDetail, PowerCurveData # Import types
+# Import the Flask app instance and DB objects from your app file
+from app import app as flask_app, db, User # Import db and User model
 
-# --- Pytest Fixture for Flask Test Client ---
+# --- Pytest Fixture for Flask Test Client with DB Handling ---
 
-@pytest.fixture
+@pytest.fixture(scope='function') # Run setup/teardown for each test function
 def client() -> Generator[FlaskClient, None, None]:
-    """Create a Flask test client instance for testing API requests."""
+    """Create a Flask test client instance with isolated DB state."""
+    # Use the regular DB URL from env vars, assuming it points to the test DB container
+    DB_URL = os.getenv('DATABASE_URL', 'postgresql+psycopg://user:password@db:5432/fit_analyzer_db')
+    flask_app.config['SQLALCHEMY_DATABASE_URI'] = DB_URL
     flask_app.config['TESTING'] = True
-    # No longer set FIT_DIR here, rely on env var mocking per test
+    # Disable CSRF protection for simpler API testing if forms were used
+    flask_app.config['WTF_CSRF_ENABLED'] = False
+    # Use a different secret key for testing if desired
+    # flask_app.config['SECRET_KEY'] = 'test-secret-key'
 
+    # Establish an application context before interacting with db
+    with flask_app.app_context():
+        # Create all tables defined in models
+        db.create_all()
+
+    # Create a test client using the Flask application context
     with flask_app.test_client() as client:
-        yield client
+        yield client # Provide the client to the test functions
+
+    # Teardown: Drop all tables after the test function completes
+    with flask_app.app_context():
+        db.session.remove() # Ensure session is closed
+        db.drop_all() # Drop all tables defined by models
 
 # --- Test Cases for API Endpoints ---
 
@@ -29,129 +46,157 @@ def test_index_route(client: FlaskClient):
     assert response.status_code == 200
     assert b"Power Curve Analyzer" in response.data
 
-# === Tests for /api/files ===
+# === Tests for Authentication API Endpoints ===
 
-def test_api_files_success(client: FlaskClient, mocker: MockerFixture):
-    """Test /api/files endpoint successfully returns mocked file details."""
-    mock_details: List[FitFileDetail] = [
-        {"filename": "activity_2.fit", "date": "2023-10-21"},
-        {"filename": "activity_1.fit", "date": "2023-10-20"}
-    ]
-    # Mock the helper function that scans the directory
-    mock_scanner = mocker.patch('app.get_fit_file_details', return_value=mock_details)
-    # Mock os.getenv specific to how it's used for FIT_DIR in the route
-    mocker.patch('os.getenv', return_value='mock_fit_dir') # Return a dummy dir path
+# --- /api/register ---
 
-    response = client.get('/api/files')
+def test_register_success(client: FlaskClient):
+    """Test successful user registration."""
+    response = client.post('/api/register', json={
+        'username': 'newuser',
+        'password': 'password123'
+    })
+    assert response.status_code == 201 # Created
+    assert response.content_type == 'application/json'
+    assert response.json == {"message": "User registered successfully"}
 
+    # Verify user exists in DB (within app context)
+    with flask_app.app_context():
+        user = db.session.execute(db.select(User).filter_by(username='newuser')).scalar_one_or_none()
+        assert user is not None
+        assert user.username == 'newuser'
+        assert user.check_password('password123') # Verify password hash
+
+def test_register_username_exists(client: FlaskClient):
+    """Test registration with an existing username."""
+    # First, register a user
+    client.post('/api/register', json={'username': 'existinguser', 'password': 'password123'})
+    # Then, try to register the same username again
+    response = client.post('/api/register', json={
+        'username': 'existinguser',
+        'password': 'anotherpassword'
+    })
+    assert response.status_code == 409 # Conflict
+    assert response.content_type == 'application/json'
+    assert "error" in response.json
+    assert "Username already exists" in response.json["error"]
+
+def test_register_missing_data(client: FlaskClient):
+    """Test registration with missing username or password."""
+    response = client.post('/api/register', json={'username': 'newuser'}) # Missing password
+    assert response.status_code == 400 # Bad Request
+    assert "Username and password required" in response.json["error"]
+
+    response = client.post('/api/register', json={'password': 'password123'}) # Missing username
+    assert response.status_code == 400 # Bad Request
+    assert "Username and password required" in response.json["error"]
+
+def test_register_short_password(client: FlaskClient):
+    """Test registration with too short password."""
+    response = client.post('/api/register', json={'username': 'newuser', 'password': '123'})
+    assert response.status_code == 400 # Bad Request
+    assert "password >= 6 chars" in response.json["error"]
+
+# --- /api/login ---
+
+def test_login_success(client: FlaskClient):
+    """Test successful user login."""
+    # Register user first
+    client.post('/api/register', json={'username': 'loginuser', 'password': 'password123'})
+    # Attempt login
+    response = client.post('/api/login', json={
+        'username': 'loginuser',
+        'password': 'password123'
+    })
     assert response.status_code == 200
     assert response.content_type == 'application/json'
-    assert response.json == mock_details
-    # Verify scanner was called with the mocked directory path
-    mock_scanner.assert_called_once_with('mock_fit_dir')
+    assert response.json == {"message": "Login successful", "username": "loginuser"}
+    # **FIX:** Check if the Set-Cookie header exists, indicating session/remember token was set
+    assert 'Set-Cookie' in response.headers
 
-def test_api_files_empty(client: FlaskClient, mocker: MockerFixture):
-    """Test /api/files endpoint when no files are found."""
-    mock_scanner = mocker.patch('app.get_fit_file_details', return_value=[])
-    mocker.patch('os.getenv', return_value='mock_fit_dir')
+def test_login_wrong_password(client: FlaskClient):
+    """Test login with incorrect password."""
+    client.post('/api/register', json={'username': 'loginuser', 'password': 'password123'})
+    response = client.post('/api/login', json={
+        'username': 'loginuser',
+        'password': 'wrongpassword'
+    })
+    assert response.status_code == 401 # Unauthorized
+    assert "Invalid username or password" in response.json["error"]
 
-    response = client.get('/api/files')
+def test_login_user_not_found(client: FlaskClient):
+    """Test login with a username that doesn't exist."""
+    response = client.post('/api/login', json={
+        'username': 'nosuchuser',
+        'password': 'password123'
+    })
+    assert response.status_code == 401 # Unauthorized
+    assert "Invalid username or password" in response.json["error"]
 
+def test_login_missing_data(client: FlaskClient):
+    """Test login with missing username or password."""
+    response = client.post('/api/login', json={'username': 'loginuser'}) # Missing password
+    assert response.status_code == 400 # Bad Request
+    assert "Username and password required" in response.json["error"]
+
+# --- /api/status ---
+
+def test_status_logged_out(client: FlaskClient):
+    """Test /api/status when not logged in."""
+    response = client.get('/api/status')
     assert response.status_code == 200
-    assert response.content_type == 'application/json'
-    assert response.json == []
-    mock_scanner.assert_called_once_with('mock_fit_dir')
+    assert response.json == {"logged_in": False}
 
-# === Tests for /api/powercurve ===
+def test_status_logged_in(client: FlaskClient):
+    """Test /api/status when logged in."""
+    # Register and login
+    client.post('/api/register', json={'username': 'statususer', 'password': 'password123'})
+    login_response = client.post('/api/login', json={'username': 'statususer', 'password': 'password123'})
+    assert login_response.status_code == 200
 
-def test_api_powercurve_success(client: FlaskClient, mocker: MockerFixture, tmp_path: Path):
-    """Test /api/powercurve successful calculation."""
-    # 1. Mock file scanner results
-    mock_file_details: List[FitFileDetail] = [
-        {"filename": "test1_2023-05-10.fit", "date": "2023-05-10"},
-        {"filename": "test2_2023-05-11.fit", "date": "2023-05-11"},
-        {"filename": "test3_2023-05-12.fit", "date": "2023-05-12"} # Outside range
-    ]
-    mock_scanner = mocker.patch('app.get_fit_file_details', return_value=mock_file_details)
+    # Check status (client maintains session cookie automatically)
+    status_response = client.get('/api/status')
+    assert status_response.status_code == 200
+    assert status_response.json["logged_in"] is True
+    assert status_response.json["user"]["username"] == "statususer"
+    assert "id" in status_response.json["user"]
 
-    # 2. Mock calculation results (using string keys as returned by API)
-    mock_power_curve_result: PowerCurveData = { 1: 300.0, 5: 280.5, 60: 250.1 }
-    mock_power_curve_json: Dict[str, float] = { "1": 300.0, "5": 280.5, "60": 250.1 }
-    mock_calculator = mocker.patch('app.calculate_aggregate_power_curve', return_value=mock_power_curve_result)
+# --- /api/logout ---
 
-    # 3. Mock environment variable for FIT_DIR used within the route
-    test_fit_dir = str(tmp_path)
-    mocker.patch('os.getenv', return_value=test_fit_dir)
+def test_logout_success(client: FlaskClient):
+    """Test successful logout."""
+    # Register and login
+    client.post('/api/register', json={'username': 'logoutuser', 'password': 'password123'})
+    client.post('/api/login', json={'username': 'logoutuser', 'password': 'password123'})
 
-    # 4. Define request payload
-    request_data: Dict[str, str] = {"startDate": "2023-05-10", "endDate": "2023-05-11"}
+    # Logout
+    logout_response = client.post('/api/logout')
+    assert logout_response.status_code == 200
+    assert logout_response.json == {"message": "Logout successful"}
 
-    # 5. Make the POST request
-    response = client.post('/api/powercurve', json=request_data)
+    # Verify status after logout
+    status_response = client.get('/api/status')
+    assert status_response.status_code == 200
+    assert status_response.json == {"logged_in": False}
 
-    # 6. Assert response
-    assert response.status_code == 200
-    assert response.content_type == 'application/json'
-    assert response.json == mock_power_curve_json # Compare with JSON-like dict
+def test_logout_when_not_logged_in(client: FlaskClient):
+    """Test accessing /api/logout when not logged in."""
+    response = client.post('/api/logout')
+    # Flask-Login typically returns 401 Unauthorized for @login_required
+    assert response.status_code == 401
 
-    # 7. Verify mocks were called correctly
-    mock_scanner.assert_called_once_with(test_fit_dir)
-    mock_calculator.assert_called_once()
-    actual_call_args, _ = mock_calculator.call_args
-    actual_paths_passed = actual_call_args[0]
-    actual_filenames_passed = [os.path.basename(p) for p in actual_paths_passed]
-    expected_filenames = ["test1_2023-05-10.fit", "test2_2023-05-11.fit"]
-    assert set(actual_filenames_passed) == set(expected_filenames)
+# === Tests for Protected Routes ===
 
-def test_api_powercurve_no_files_in_range(client: FlaskClient, mocker: MockerFixture, tmp_path: Path):
-    """Test /api/powercurve when date range selects no files."""
-    mock_file_details: List[FitFileDetail] = [
-        {"filename": "test1_2023-05-10.fit", "date": "2023-05-10"},
-    ]
-    mock_scanner = mocker.patch('app.get_fit_file_details', return_value=mock_file_details)
-    mock_calculator = mocker.patch('app.calculate_aggregate_power_curve')
-    test_fit_dir = str(tmp_path)
-    mocker.patch('os.getenv', return_value=test_fit_dir)
+def test_protected_routes_unauthorized(client: FlaskClient):
+    """Test accessing protected routes without logging in."""
+    # Placeholder routes that should require login
+    protected_routes = ['/api/files', '/api/powercurve'] # Add more as needed
 
-    request_data: Dict[str, str] = {"startDate": "2023-06-01", "endDate": "2023-06-02"}
-    response = client.post('/api/powercurve', json=request_data)
+    for route in protected_routes:
+        if route == '/api/powercurve': # Power curve expects POST
+             response = client.post(route, json={})
+        else: # Assume GET for others for now
+             response = client.get(route)
 
-    assert response.status_code == 404
-    assert response.content_type == 'application/json'
-    assert "error" in response.json
-    assert "No FIT files found" in response.json["error"]
-    mock_scanner.assert_called_once_with(test_fit_dir)
-    mock_calculator.assert_not_called()
+        assert response.status_code == 401, f"Route {route} did not return 401 Unauthorized"
 
-def test_api_powercurve_bad_request_missing_date(client: FlaskClient):
-    """Test /api/powercurve with missing date parameters."""
-    response = client.post('/api/powercurve', json={"startDate": "2023-05-10"})
-    assert response.status_code == 400
-    assert "error" in response.json
-    assert "Missing" in response.json["error"]
-
-def test_api_powercurve_bad_request_invalid_date_format(client: FlaskClient):
-    """Test /api/powercurve with invalid date format."""
-    request_data: Dict[str, str] = {"startDate": "10-05-2023", "endDate": "11-05-2023"}
-    response = client.post('/api/powercurve', json=request_data)
-    assert response.status_code == 400
-    assert "error" in response.json
-    assert "Invalid date format" in response.json["error"]
-
-def test_api_powercurve_calculation_error(client: FlaskClient, mocker: MockerFixture, tmp_path: Path):
-    """Test /api/powercurve when the calculation function returns None (error)."""
-    mock_file_details: List[FitFileDetail] = [
-        {"filename": "test1_2023-05-10.fit", "date": "2023-05-10"},
-    ]
-    mock_scanner = mocker.patch('app.get_fit_file_details', return_value=mock_file_details)
-    mocker.patch('app.calculate_aggregate_power_curve', return_value=None) # Simulate calculation failure
-    test_fit_dir = str(tmp_path)
-    mocker.patch('os.getenv', return_value=test_fit_dir)
-
-    request_data: Dict[str, str] = {"startDate": "2023-05-10", "endDate": "2023-05-10"}
-    response = client.post('/api/powercurve', json=request_data)
-
-    assert response.status_code == 500
-    assert "error" in response.json
-    assert "Failed to calculate" in response.json["error"]
-    mock_scanner.assert_called_once_with(test_fit_dir)

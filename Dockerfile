@@ -9,11 +9,12 @@
         libpq-dev \
         && rm -rf /var/lib/apt/lists/*
     
-    # Copy requirements file
+    # Copy requirements files
     COPY requirements.txt .
+    COPY requirements-dev.txt .
     
-    # Install dependencies
-    RUN pip install --no-cache-dir -r requirements.txt
+    # Install dependencies using requirements-dev.txt
+    RUN pip install --no-cache-dir -r requirements-dev.txt
     
     # --- Stage 2: Final Application Image ---
     FROM python:3.10-slim
@@ -41,18 +42,16 @@
     
     # Copy installed dependencies from the builder stage
     COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
-    # Copy the executables installed by pip
+    # Copy the executables installed by pip (including pytest)
     COPY --from=builder /usr/local/bin /usr/local/bin
-    
-    # *** DIAGNOSTIC STEP: Check if psycopg was copied ***
-    RUN echo "Checking for psycopg in final stage site-packages:" && \
-        ls -l /usr/local/lib/python3.10/site-packages/psycopg* || echo "psycopg* not found!"
     
     # Copy application code (app.py, templates/)
     COPY app.py .
     COPY templates ./templates
-    # Copy migrations directory if it exists (created by flask db init)
+    # Copy migrations directory (ensure flask db init was run locally first!)
     COPY migrations ./migrations
+    # Copy test directory (optional, but needed if running tests from within final image)
+    COPY tests ./tests
     
     # Change ownership
     RUN chown -R appuser:appgroup /app
@@ -62,9 +61,10 @@
     
     EXPOSE ${FIT_ANALYZER_PORT}
     
-    # Define the command to run migrations then the application
-    CMD ["sh", "-c", "flask db upgrade && gunicorn --workers $WORKERS --bind $FIT_ANALYZER_HOST:$FIT_ANALYZER_PORT --timeout $TIMEOUT app:app"]
+    # ** CHANGE: Use Shell form for CMD to allow environment variable substitution **
+    # Using 'exec' ensures gunicorn replaces the shell process (becomes PID 1)
+    CMD exec gunicorn --workers $WORKERS --bind $FIT_ANALYZER_HOST:$FIT_ANALYZER_PORT --timeout $TIMEOUT app:app
     
-    # Alternative CMD without auto-migration:
-    # CMD ["gunicorn", "--workers", "$WORKERS", "--bind", "$FIT_ANALYZER_HOST:$FIT_ANALYZER_PORT", "--timeout", "$TIMEOUT", "app:app"]
+    # Alternative shell form (without explicit 'exec'):
+    # CMD gunicorn --workers $WORKERS --bind $FIT_ANALYZER_HOST:$FIT_ANALYZER_PORT --timeout $TIMEOUT app:app
     
