@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  web:
+    build: . # Build the image from the Dockerfile in the current directory
+    container_name: fit_analyzer_web
+    ports:
+      - "${FIT_ANALYZER_PORT:-5000}:5000" # Map host port (default 5000) to container port 5000
+    volumes:
+      - ./fitfiles:/app/fitfiles # Mount local fitfiles dir to container (adjust host path if needed)
+      # Optional: Mount code for development hot-reloading (requires debug mode)
+      # - .:/app
+    environment:
+      # Pass database connection details to the Flask app
+      # These should match the 'db' service below and postgres env vars
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-fit_analyzer_db}
+      # Pass other env vars if needed (defaults are set in Dockerfile)
+      - FIT_ANALYZER_PORT=5000
+      - FLASK_DEBUG=${FLASK_DEBUG:-0} # Set to 1 for debug mode (use with code volume mount)
+    depends_on:
+      db: # Wait for the db service to be healthy before starting web
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:15-alpine # Use official Postgres image (Alpine is smaller)
+    container_name: fit_analyzer_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/ # Persist database data using a named volume
+    environment:
+      # Set database user, password, and database name
+      # IMPORTANT: Use strong passwords in a real environment, manage secrets properly!
+      - POSTGRES_USER=${POSTGRES_USER:-user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+      - POSTGRES_DB=${POSTGRES_DB:-fit_analyzer_db}
+    healthcheck: # Check if database is ready
+        test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-fit_analyzer_db}"]
+        interval: 5s
+        timeout: 5s
+        retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data: # Define the named volume for database persistence

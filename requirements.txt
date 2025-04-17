@@ -1,4 +1,26 @@
+# Flask framework and web server gateway interface (WSGI) server
 Flask
-pandas
-fitdecode
 gunicorn
+
+# Data manipulation and analysis
+pandas
+
+# FIT file decoding
+fitdecode
+
+# Database ORM and Flask integration
+SQLAlchemy
+Flask-SQLAlchemy
+
+# Database driver for PostgreSQL
+psycopg
+
+# Database migrations
+Flask-Migrate
+alembic # Usually installed as dependency, but good to list
+
+# Password hashing (comes with Werkzeug/Flask, but passlib is also good)
+# passlib # Optional, Werkzeug is usually sufficient
+
+# For loading .env files locally (optional)
+python-dotenv
