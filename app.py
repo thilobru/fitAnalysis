@@ -30,7 +30,7 @@ FIT_DIR: str = os.getenv(FIT_DIR_ENV_VAR, DEFAULT_FIT_DIR)
 # Get database URL from environment variable set by docker-compose or locally
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
     'DATABASE_URL',
-    'postgresql://user:password@localhost:5432/fit_analyzer_db' # Default for local dev if not set
+    'postgresql+psycopg://user:password@localhost:5432/fit_analyzer_db' # Default for local dev if not set
 )
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False # Disable modification tracking overhead
 
