@@ -1,41 +1,47 @@
-    version: '3.8'
+version: '3.8' # Optional, can be removed
 
-    services:
-      web:
-        build: .
-        container_name: fit_analyzer_web
-        ports:
-          - "${FIT_ANALYZER_PORT:-5000}:5000"
-        volumes:
-          - ./fitfiles:/app/fitfiles
-        environment:
-          # ** CHANGE: Use explicit 'postgresql+psycopg' dialect **
-          - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-fit_analyzer_db}
-          - FIT_ANALYZER_PORT=5000
-          - FLASK_DEBUG=${FLASK_DEBUG:-0}
-          # Pass FIT_ANALYZER_FIT_DIR if needed, though Dockerfile sets default
-          - FIT_ANALYZER_FIT_DIR=/app/fitfiles
-        depends_on:
-          db:
-            condition: service_healthy
-        restart: unless-stopped
-
-      db:
-        image: postgres:15-alpine
-        container_name: fit_analyzer_db
-        volumes:
-          - postgres_data:/var/lib/postgresql/data/
-        environment:
-          - POSTGRES_USER=${POSTGRES_USER:-user}
-          - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
-          - POSTGRES_DB=${POSTGRES_DB:-fit_analyzer_db}
-        healthcheck:
-            test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-fit_analyzer_db}"]
-            interval: 5s
-            timeout: 5s
-            retries: 5
-        restart: unless-stopped
-
+services:
+  web:
+    build: .
+    container_name: fit_analyzer_web
+    ports:
+      - "${FIT_ANALYZER_PORT:-5000}:5000"
     volumes:
-      postgres_data:
-    
+      - ./fitfiles:/app/fitfiles
+      # Optional: Mount code for development hot-reloading (requires debug mode)
+      # - .:/app
+    environment:
+      # Database URL using explicit dialect
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-fit_analyzer_db}
+      # App specific config
+      - FIT_ANALYZER_PORT=5000
+      - FIT_ANALYZER_FIT_DIR=/app/fitfiles
+      # Flask specific config
+      - FLASK_DEBUG=${FLASK_DEBUG:-0} # Set to 1 for debug mode
+      # ** ADD SECRET KEY ** - Use a strong random key in production!
+      # Read from host environment or .env file if possible, otherwise set default for dev
+      - SECRET_KEY=${SECRET_KEY:-YourDevSecretKeyHereChangeMe}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:15-alpine
+    container_name: fit_analyzer_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    environment:
+      # Read from host environment or .env file if possible
+      - POSTGRES_USER=${POSTGRES_USER:-user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+      - POSTGRES_DB=${POSTGRES_DB:-fit_analyzer_db}
+    healthcheck:
+        test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-fit_analyzer_db}"]
+        interval: 5s
+        timeout: 5s
+        retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

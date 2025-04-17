@@ -16,7 +16,6 @@ Thumbs.db
 # Local data files (should not be committed)
 fitfiles/
 experiments/
-migrations/
 
 # Optional: Sensitive config files (if any)
 # config.ini

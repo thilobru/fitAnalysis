@@ -65,15 +65,28 @@ This is the easiest way to run the application.
 
 The application can be configured using environment variables, particularly useful when running via Docker:
 
+* **`DATABASE_URL`**: The full connection string for the PostgreSQL database.
+    * Default (for Docker Compose): `postgresql+psycopg://user:password@db:5432/fit_analyzer_db`
+    * Set automatically by `docker-compose.yml`. Override if needed.
+* **`SECRET_KEY`**: **CRITICAL** A strong, random secret string used to secure user sessions.
+    * **REQUIRED for production.** Set this to a long, unpredictable value.
+    * Default (in `docker-compose.yml` example): `YourDevSecretKeyHereChangeMe` (Change this!)
 * **`FIT_ANALYZER_FIT_DIR`**: Path *inside the container* where the application looks for `.fit` files.
     * Default: `/app/fitfiles`
-    * **Note:** You typically control the *content* of this directory by mounting a host volume using the `-v` flag in `docker run`. You usually don't need to change this environment variable unless you change the mount point path in the `docker run` command (e.g., `-v /host/path:/data` then `-e FIT_ANALYZER_FIT_DIR=/data`).
-* **`FIT_ANALYZER_HOST`**: Host address for the server to bind to inside the container.
-    * Default: `0.0.0.0` (listens on all interfaces within the container)
-* **`FIT_ANALYZER_PORT`**: Port for the server to listen on inside the container.
-    * Default: `5000` (This is the port you map using `-p host:container`)
-* **`WORKERS`**: Number of Gunicorn worker processes.
+    * **Note:** You control the *content* via the `-v` volume mount in `docker run` or `docker-compose.yml`.
+* **`FIT_ANALYZER_HOST`**: Host address for the server inside the container.
+    * Default: `0.0.0.0`
+* **`FIT_ANALYZER_PORT`**: Port for the server inside the container.
+    * Default: `5000`
+* **`WORKERS`**: Number of Gunicorn worker processes (used by Docker CMD).
     * Default: `2`
+* **`TIMEOUT`**: Gunicorn worker timeout in seconds (used by Docker CMD).
+    * Default: `180`
+* **`FLASK_DEBUG`**: Set to `1` to enable Flask debug mode (for development only).
+    * Default: `0` (disabled)
+
+You can set these using the `-e` flag with `docker run` or under the `environment:` section in `docker-compose.yml`. For local development without Docker, you can set them in your shell or use a `.env` file (create a file named `.env` in the project root and add `VAR=VALUE` lines).
+
 
 Example overriding the port inside the container (less common, usually you just change the host port mapping):
 ```bash

@@ -1,5 +1,6 @@
 # Flask framework and web server gateway interface (WSGI) server
 Flask
+Flask-Login
 gunicorn
 
 # Data manipulation and analysis
