@@ -7,7 +7,9 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <style>
-        body { font-family: sans-serif; }
+        /* Basic body styling */
+        body { font-family: 'Inter', sans-serif; }
+        /* Ensure canvas is responsive */
         .chart-container {
             position: relative;
             margin: 2rem auto; /* Add some margin */
@@ -15,60 +17,562 @@
             width: 80vw;
             max-width: 900px;
         }
-        /* Style for loading/error messages */
-        #statusMessage {
-            min-height: 2em; /* Reserve space */
+        /* Style for loading/error/status messages */
+        .status-message {
+            min-height: 1.5em; /* Reserve space */
             text-align: center;
-            margin-top: 1rem;
-            font-weight: bold;
+            margin-top: 0.5rem;
+            font-weight: 500;
+            padding: 0.5rem;
+            border-radius: 0.375rem; /* rounded-md */
         }
+        .status-error { background-color: #fee2e2; color: #dc2626; } /* red-100 / red-600 */
+        .status-success { background-color: #dcfce7; color: #16a34a; } /* green-100 / green-600 */
+        .status-info { background-color: #e0f2fe; color: #0284c7; } /* sky-100 / sky-600 */
+
+        /* Hide elements by default */
+        .hidden { display: none; }
+
         /* Basic button styling */
-        button { transition: background-color 0.2s ease; }
+        button, input[type="submit"] {
+            transition: background-color 0.2s ease;
+            border-radius: 0.375rem; /* rounded-md */
+            padding: 0.5rem 1rem;
+            font-weight: 600;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+        }
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .btn-primary { background-color: #4f46e5; color: white; } /* indigo-600 */
+        .btn-primary:hover:not(:disabled) { background-color: #4338ca; } /* indigo-700 */
+        .btn-secondary { background-color: #e5e7eb; color: #374151; } /* gray-200 / gray-700 */
+        .btn-secondary:hover:not(:disabled) { background-color: #d1d5db; } /* gray-300 */
+        .btn-danger { background-color: #dc2626; color: white; } /* red-600 */
+        .btn-danger:hover:not(:disabled) { background-color: #b91c1c; } /* red-700 */
+
+        /* Input field styling */
+        input[type="text"], input[type="password"], input[type="date"], input[type="file"] {
+            border: 1px solid #d1d5db; /* gray-300 */
+            border-radius: 0.375rem; /* rounded-md */
+            padding: 0.5rem 0.75rem;
+            width: 100%;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+        }
+        input[type="file"] { padding: 0.3rem 0.75rem; }
+        input:focus { outline: 2px solid transparent; outline-offset: 2px; border-color: #6366f1; box-shadow: 0 0 0 2px #a5b4fc; } /* indigo-500 focus */
+
+        /* Style for file list items */
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 0.75rem;
+            border-bottom: 1px solid #e5e7eb; /* gray-200 */
+        }
+        .file-item:last-child { border-bottom: none; }
     </style>
+    <link rel="preconnect" href="https://rsms.me/">
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
 </head>
 <body class="bg-gray-100 p-4 md:p-8">
 
-    <h1 class="text-2xl md:text-3xl font-bold text-center mb-6 text-gray-800">Power Curve Analyzer</h1>
-
-    <div class="max-w-xl mx-auto bg-white p-6 rounded-lg shadow-md mb-8">
-        <h2 class="text-xl font-semibold mb-4 text-gray-700">Select Date Range</h2>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-            <div>
-                <label for="startDate" class="block text-sm font-medium text-gray-600 mb-1">Start Date:</label>
-                <input type="date" id="startDate" name="startDate" required
-                       class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
-            </div>
-            <div>
-                <label for="endDate" class="block text-sm font-medium text-gray-600 mb-1">End Date:</label>
-                <input type="date" id="endDate" name="endDate" required
-                       class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
-            </div>
-            <button id="generateButton"
-                    class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md shadow focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-                Generate Power Curve
-            </button>
+    <header class="flex justify-between items-center mb-6 max-w-5xl mx-auto">
+        <h1 class="text-2xl md:text-3xl font-bold text-gray-800">Power Curve Analyzer</h1>
+        <div id="userStatusArea">
+            <span id="userInfo" class="hidden mr-4 text-gray-700"></span>
+            <button id="logoutButton" class="btn-secondary hidden">Logout</button>
+            <button id="showLoginButton" class="btn-primary">Login</button>
+            <button id="showRegisterButton" class="btn-secondary ml-2">Register</button>
         </div>
-         <div id="statusMessage" class="mt-4 text-center text-red-600 font-semibold"></div>
-    </div>
+    </header>
 
-    <div class="chart-container bg-white p-4 rounded-lg shadow-md">
-        <canvas id="powerCurveChart"></canvas>
-    </div>
+    <main class="max-w-5xl mx-auto">
+
+        <section id="loginSection" class="hidden max-w-sm mx-auto bg-white p-6 rounded-lg shadow-md mb-8">
+            <h2 class="text-xl font-semibold mb-4 text-gray-700 text-center">Login</h2>
+            <form id="loginForm">
+                <div class="mb-4">
+                    <label for="loginUsername" class="block text-sm font-medium text-gray-600 mb-1">Username:</label>
+                    <input type="text" id="loginUsername" name="username" required autocomplete="username">
+                </div>
+                <div class="mb-4">
+                    <label for="loginPassword" class="block text-sm font-medium text-gray-600 mb-1">Password:</label>
+                    <input type="password" id="loginPassword" name="password" required autocomplete="current-password">
+                </div>
+                <button type="submit" class="btn-primary w-full">Login</button>
+                <div id="loginStatusMessage" class="status-message"></div>
+            </form>
+        </section>
+
+        <section id="registerSection" class="hidden max-w-sm mx-auto bg-white p-6 rounded-lg shadow-md mb-8">
+            <h2 class="text-xl font-semibold mb-4 text-gray-700 text-center">Register</h2>
+            <form id="registerForm">
+                <div class="mb-4">
+                    <label for="registerUsername" class="block text-sm font-medium text-gray-600 mb-1">Username:</label>
+                    <input type="text" id="registerUsername" name="username" required minlength="3" autocomplete="username">
+                </div>
+                <div class="mb-4">
+                    <label for="registerPassword" class="block text-sm font-medium text-gray-600 mb-1">Password:</label>
+                    <input type="password" id="registerPassword" name="password" required minlength="6" autocomplete="new-password">
+                </div>
+                <button type="submit" class="btn-primary w-full">Register</button>
+                <div id="registerStatusMessage" class="status-message"></div>
+            </form>
+        </section>
+
+        <div id="loggedInContent" class="hidden">
+
+            <section class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+                <div class="bg-white p-6 rounded-lg shadow-md">
+                    <h2 class="text-xl font-semibold mb-4 text-gray-700">Upload FIT File</h2>
+                    <form id="uploadForm">
+                        <div class="mb-4">
+                            <label for="fileInput" class="block text-sm font-medium text-gray-600 mb-1">Select .fit file:</label>
+                            <input type="file" id="fileInput" name="file" accept=".fit" required class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                        </div>
+                        <button type="submit" id="uploadButton" class="btn-primary w-full">Upload File</button>
+                        <div id="uploadStatusMessage" class="status-message"></div>
+                    </form>
+                </div>
+
+                <div class="bg-white p-6 rounded-lg shadow-md">
+                    <h2 class="text-xl font-semibold mb-4 text-gray-700">Your Uploaded Files</h2>
+                    <div id="fileListContainer" class="max-h-60 overflow-y-auto">
+                        <p id="fileListPlaceholder" class="text-gray-500 text-center py-4">No files uploaded yet.</p>
+                    </div>
+                    <div id="fileListStatusMessage" class="status-message"></div>
+                </div>
+            </section>
+
+            <section id="powerCurveSection" class="bg-white p-6 rounded-lg shadow-md mb-8">
+                <h2 class="text-xl font-semibold mb-4 text-gray-700">Generate Power Curve</h2>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                    <div>
+                        <label for="startDate" class="block text-sm font-medium text-gray-600 mb-1">Start Date:</label>
+                        <input type="date" id="startDate" name="startDate" required>
+                    </div>
+                    <div>
+                        <label for="endDate" class="block text-sm font-medium text-gray-600 mb-1">End Date:</label>
+                        <input type="date" id="endDate" name="endDate" required>
+                    </div>
+                    <button id="generateButton" class="btn-primary w-full">
+                        Generate Power Curve
+                    </button>
+                </div>
+                 <div id="powerCurveStatusMessage" class="status-message"></div>
+            </section>
+
+            <section class="chart-container bg-white p-4 rounded-lg shadow-md">
+                <canvas id="powerCurveChart"></canvas>
+            </section>
+
+        </div> </main>
 
     <script>
+        // --- DOM Elements ---
+        const userStatusArea = document.getElementById('userStatusArea');
+        const userInfo = document.getElementById('userInfo');
+        const logoutButton = document.getElementById('logoutButton');
+        const showLoginButton = document.getElementById('showLoginButton');
+        const showRegisterButton = document.getElementById('showRegisterButton');
+
+        const loginSection = document.getElementById('loginSection');
+        const registerSection = document.getElementById('registerSection');
+        const loggedInContent = document.getElementById('loggedInContent');
+
+        const loginForm = document.getElementById('loginForm');
+        const registerForm = document.getElementById('registerForm');
+        const uploadForm = document.getElementById('uploadForm');
+
+        const loginStatusMessage = document.getElementById('loginStatusMessage');
+        const registerStatusMessage = document.getElementById('registerStatusMessage');
+        const uploadStatusMessage = document.getElementById('uploadStatusMessage');
+        const fileListStatusMessage = document.getElementById('fileListStatusMessage');
+        const powerCurveStatusMessage = document.getElementById('powerCurveStatusMessage');
+
+        const fileInput = document.getElementById('fileInput');
+        const fileListContainer = document.getElementById('fileListContainer');
+        const fileListPlaceholder = document.getElementById('fileListPlaceholder');
+
+        const startDateInput = document.getElementById('startDate');
+        const endDateInput = document.getElementById('endDate');
+        const generateButton = document.getElementById('generateButton');
+        const powerCurveChartElement = document.getElementById('powerCurveChart');
+
         let powerCurveChart = null; // Variable to hold the chart instance
 
-        // Function to initialize or update the chart
+        // --- Helper Functions ---
+
+        /**
+         * Sets a status message in a designated element.
+         * @param {HTMLElement} element - The DOM element to display the message in.
+         * @param {string} message - The message text.
+         * @param {'error' | 'success' | 'info' | 'clear'} type - The type of message.
+         */
+        function setStatusMessage(element, message, type = 'info') {
+            if (!element) return;
+            element.textContent = message;
+            element.className = 'status-message'; // Reset classes
+            if (type === 'error') {
+                element.classList.add('status-error');
+            } else if (type === 'success') {
+                element.classList.add('status-success');
+            } else if (type === 'info') {
+                element.classList.add('status-info');
+            } else { // 'clear' or invalid type
+                element.textContent = ''; // Clear message
+            }
+        }
+
+        /**
+         * Updates the UI visibility based on login status.
+         * @param {boolean} isLoggedIn - Whether the user is logged in.
+         * @param {string|null} username - The username if logged in.
+         */
+        function updateUI(isLoggedIn, username = null) {
+            if (isLoggedIn) {
+                userInfo.textContent = `Logged in as: ${username}`;
+                userInfo.classList.remove('hidden');
+                logoutButton.classList.remove('hidden');
+                showLoginButton.classList.add('hidden');
+                showRegisterButton.classList.add('hidden');
+                loginSection.classList.add('hidden');
+                registerSection.classList.add('hidden');
+                loggedInContent.classList.remove('hidden');
+                fetchAndDisplayFiles(); // Fetch files when logged in
+                setDefaultDates(); // Set default dates for power curve
+            } else {
+                userInfo.classList.add('hidden');
+                logoutButton.classList.add('hidden');
+                showLoginButton.classList.remove('hidden');
+                showRegisterButton.classList.remove('hidden');
+                // Keep login/register sections hidden unless explicitly shown
+                loggedInContent.classList.add('hidden');
+                if (powerCurveChart) { // Destroy chart if logged out
+                    powerCurveChart.destroy();
+                    powerCurveChart = null;
+                }
+            }
+        }
+
+        /**
+         * Sets default dates for the power curve analysis (e.g., start of year to today).
+         */
+        function setDefaultDates() {
+            const today = new Date().toISOString().split('T')[0];
+            const startOfYear = new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0];
+            if (startDateInput) startDateInput.value = startOfYear;
+            if (endDateInput) endDateInput.value = today;
+        }
+
+        // --- API Interaction Functions ---
+
+        /**
+         * Checks the current login status with the backend.
+         */
+        async function checkLoginStatus() {
+            try {
+                const response = await fetch('/api/status');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                updateUI(data.logged_in, data.user?.username);
+            } catch (error) {
+                console.error('Error checking login status:', error);
+                setStatusMessage(loginStatusMessage, 'Could not verify login status.', 'error');
+                updateUI(false); // Assume logged out on error
+            }
+        }
+
+        /**
+         * Handles the login form submission.
+         * @param {Event} event - The form submission event.
+         */
+        async function handleLogin(event) {
+            event.preventDefault();
+            setStatusMessage(loginStatusMessage, 'Logging in...', 'info');
+            const formData = new FormData(loginForm);
+            const data = Object.fromEntries(formData.entries());
+
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data),
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.error || `Login failed (status ${response.status})`);
+                }
+                setStatusMessage(loginStatusMessage, 'Login successful!', 'success');
+                setTimeout(() => { // Give time to see message
+                    loginSection.classList.add('hidden');
+                    setStatusMessage(loginStatusMessage, '', 'clear'); // Clear message
+                    checkLoginStatus(); // Re-check status to update UI fully
+                }, 1000);
+            } catch (error) {
+                console.error('Login error:', error);
+                setStatusMessage(loginStatusMessage, error.message, 'error');
+            }
+        }
+
+        /**
+         * Handles the registration form submission.
+         * @param {Event} event - The form submission event.
+         */
+        async function handleRegister(event) {
+            event.preventDefault();
+            setStatusMessage(registerStatusMessage, 'Registering...', 'info');
+            const formData = new FormData(registerForm);
+            const data = Object.fromEntries(formData.entries());
+
+            if (data.password.length < 6) {
+                 setStatusMessage(registerStatusMessage, 'Password must be at least 6 characters.', 'error');
+                 return;
+            }
+             if (data.username.length < 3) {
+                 setStatusMessage(registerStatusMessage, 'Username must be at least 3 characters.', 'error');
+                 return;
+            }
+
+            try {
+                const response = await fetch('/api/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data),
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                     throw new Error(result.error || `Registration failed (status ${response.status})`);
+                }
+                setStatusMessage(registerStatusMessage, 'Registration successful! Please log in.', 'success');
+                registerForm.reset();
+                 setTimeout(() => { // Give time to see message
+                    registerSection.classList.add('hidden');
+                    loginSection.classList.remove('hidden'); // Show login form
+                    setStatusMessage(registerStatusMessage, '', 'clear'); // Clear message
+                }, 2000);
+            } catch (error) {
+                console.error('Registration error:', error);
+                setStatusMessage(registerStatusMessage, error.message, 'error');
+            }
+        }
+
+        /**
+         * Handles the logout button click.
+         */
+        async function handleLogout() {
+            try {
+                const response = await fetch('/api/logout', { method: 'POST' });
+                if (!response.ok) {
+                    throw new Error(`Logout failed (status ${response.status})`);
+                }
+                // No need for success message, UI update is enough
+                updateUI(false); // Update UI to logged-out state
+                // Optionally clear other status messages
+                setStatusMessage(uploadStatusMessage, '', 'clear');
+                setStatusMessage(fileListStatusMessage, '', 'clear');
+                setStatusMessage(powerCurveStatusMessage, '', 'clear');
+
+            } catch (error) {
+                console.error('Logout error:', error);
+                // Show error somewhere appropriate if needed
+            }
+        }
+
+        /**
+         * Fetches the user's file list and displays it.
+         */
+        async function fetchAndDisplayFiles() {
+            setStatusMessage(fileListStatusMessage, 'Loading files...', 'info');
+            fileListContainer.innerHTML = ''; // Clear previous list
+            fileListPlaceholder.classList.add('hidden'); // Hide placeholder initially
+
+            try {
+                const response = await fetch('/api/files');
+                if (!response.ok) {
+                    if (response.status === 401) { // Handle case where session expired
+                         updateUI(false); // Force UI to logged-out state
+                         setStatusMessage(loginStatusMessage, 'Session expired. Please log in again.', 'error');
+                         loginSection.classList.remove('hidden');
+                         return;
+                    }
+                    throw new Error(`Failed to fetch files (status ${response.status})`);
+                }
+                const files = await response.json();
+
+                if (files.length === 0) {
+                    fileListContainer.appendChild(fileListPlaceholder); // Re-add placeholder
+                    fileListPlaceholder.classList.remove('hidden');
+                    setStatusMessage(fileListStatusMessage, '', 'clear'); // Clear loading message
+                } else {
+                    files.forEach(file => {
+                        const div = document.createElement('div');
+                        div.className = 'file-item';
+
+                        const infoSpan = document.createElement('span');
+                        infoSpan.textContent = `${file.filename} (${file.date || 'No date'}) - ${file.size_kb ? file.size_kb + ' KB' : 'N/A'}`;
+                        infoSpan.className = 'text-sm text-gray-700';
+
+                        const deleteButton = document.createElement('button');
+                        deleteButton.textContent = 'Delete';
+                        deleteButton.className = 'btn-danger text-xs px-2 py-1';
+                        deleteButton.onclick = () => handleFileDelete(file.id, file.filename);
+
+                        div.appendChild(infoSpan);
+                        div.appendChild(deleteButton);
+                        fileListContainer.appendChild(div);
+                    });
+                    setStatusMessage(fileListStatusMessage, '', 'clear'); // Clear loading message
+                }
+            } catch (error) {
+                console.error('Error fetching files:', error);
+                setStatusMessage(fileListStatusMessage, 'Could not load file list.', 'error');
+                fileListContainer.appendChild(fileListPlaceholder); // Show placeholder on error
+                fileListPlaceholder.classList.remove('hidden');
+                fileListPlaceholder.textContent = 'Error loading files.';
+            }
+        }
+
+        /**
+         * Handles the file upload form submission.
+         * @param {Event} event - The form submission event.
+         */
+        async function handleFileUpload(event) {
+            event.preventDefault();
+            if (!fileInput.files || fileInput.files.length === 0) {
+                setStatusMessage(uploadStatusMessage, 'Please select a file to upload.', 'error');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            if (!file.name.toLowerCase().endsWith('.fit')) {
+                 setStatusMessage(uploadStatusMessage, 'Only .fit files are allowed.', 'error');
+                 return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            setStatusMessage(uploadStatusMessage, 'Uploading...', 'info');
+            const uploadButton = document.getElementById('uploadButton');
+            uploadButton.disabled = true;
+
+            try {
+                const response = await fetch('/api/files', {
+                    method: 'POST',
+                    body: formData, // No Content-Type header needed for FormData
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.error || `Upload failed (status ${response.status})`);
+                }
+                setStatusMessage(uploadStatusMessage, `File '${result.file.filename}' uploaded successfully!`, 'success');
+                uploadForm.reset(); // Clear the form
+                fetchAndDisplayFiles(); // Refresh the file list
+            } catch (error) {
+                console.error('Upload error:', error);
+                setStatusMessage(uploadStatusMessage, error.message, 'error');
+            } finally {
+                uploadButton.disabled = false;
+            }
+        }
+
+        /**
+         * Handles the deletion of a file.
+         * @param {number} fileId - The ID of the file to delete.
+         * @param {string} filename - The name of the file (for confirmation).
+         */
+        async function handleFileDelete(fileId, filename) {
+            if (!confirm(`Are you sure you want to delete "${filename}"?`)) {
+                return;
+            }
+
+            setStatusMessage(fileListStatusMessage, `Deleting ${filename}...`, 'info');
+
+            try {
+                const response = await fetch(`/api/files/${fileId}`, {
+                    method: 'DELETE',
+                });
+                const result = await response.json(); // Even on success, check message
+                if (!response.ok) {
+                     throw new Error(result.error || `Deletion failed (status ${response.status})`);
+                }
+                setStatusMessage(fileListStatusMessage, `File '${filename}' deleted.`, 'success');
+                fetchAndDisplayFiles(); // Refresh the list
+            } catch (error) {
+                console.error('Delete error:', error);
+                setStatusMessage(fileListStatusMessage, error.message, 'error');
+            }
+        }
+
+        /**
+         * Handles the request to generate the power curve.
+         */
+        async function handleGeneratePowerCurve() {
+            const startDate = startDateInput.value;
+            const endDate = endDateInput.value;
+
+            if (!startDate || !endDate) {
+                setStatusMessage(powerCurveStatusMessage, 'Please select both a start and end date.', true);
+                return;
+            }
+            if (new Date(startDate) > new Date(endDate)) {
+                 setStatusMessage(powerCurveStatusMessage, 'Start date cannot be after end date.', true);
+                 return;
+            }
+
+            setStatusMessage(powerCurveStatusMessage, 'Generating power curve...', 'info');
+            generateButton.disabled = true;
+
+            try {
+                const response = await fetch('/api/powercurve', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ startDate, endDate }),
+                });
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.error || `HTTP error! status: ${response.status}`);
+                }
+
+                if (Object.keys(result).length === 0) {
+                    setStatusMessage(powerCurveStatusMessage, 'No valid power data found for the selected date range.', 'info');
+                     if (powerCurveChart) {
+                         powerCurveChart.destroy();
+                         powerCurveChart = null;
+                     }
+                } else {
+                   displayChart(result); // Display the chart
+                   setStatusMessage(powerCurveStatusMessage, 'Power curve generated.', 'success');
+                }
+
+            } catch (error) {
+                console.error('Error fetching or processing power curve:', error);
+                setStatusMessage(powerCurveStatusMessage, `Error: ${error.message}`, 'error');
+                 if (powerCurveChart) {
+                     powerCurveChart.destroy();
+                     powerCurveChart = null;
+                 }
+            } finally {
+                 generateButton.disabled = false;
+            }
+        }
+
+        /**
+         * Initializes or updates the power curve chart.
+         * @param {object} powerData - The power curve data { duration: power }.
+         */
         function displayChart(powerData) {
-            const ctx = document.getElementById('powerCurveChart').getContext('2d');
-            setStatusMessage(''); // Clear status message on success
+            const ctx = powerCurveChartElement.getContext('2d');
 
-            // Prepare data for Chart.js
-            // Sort keys (durations) numerically before creating labels/data
             const sortedDurations = Object.keys(powerData).map(Number).sort((a, b) => a - b);
-            const labels = sortedDurations.map(String); // X-axis labels (seconds)
-            const dataPoints = sortedDurations.map(duration => powerData[duration.toString()]); // Y-axis values (watts)
-
+            const labels = sortedDurations.map(String);
+            const dataPoints = sortedDurations.map(duration => powerData[duration.toString()]);
 
             const chartConfig = {
                 type: 'line',
@@ -96,7 +600,6 @@
                                  callback: function(value, index, values) {
                                     const commonTicks = [1, 5, 10, 30, 60, 300, 600, 1200, 1800, 3600, 5400];
                                     const numericValue = Number(this.getLabelForValue(value));
-                                    // Only show labels for common ticks or powers of 10 for clarity
                                     if (commonTicks.includes(numericValue) || Math.log10(numericValue) % 1 === 0) {
                                         return numericValue + 's';
                                     }
@@ -108,7 +611,7 @@
                             }
                         },
                         y: {
-                            beginAtZero: true,
+                            beginAtZero: false, // Adjust if needed, often better not to start at 0 for power
                             title: { display: true, text: 'Max Average Power (watts)', font: { size: 14 } }
                         }
                     },
@@ -116,7 +619,7 @@
                         tooltip: {
                             callbacks: {
                                 title: function(tooltipItems) { return 'Duration: ' + tooltipItems[0].label + 's'; },
-                                label: function(tooltipItem) { return 'Max Avg Power: ' + tooltipItem.raw + ' W'; }
+                                label: function(tooltipItem) { return 'Max Avg Power: ' + Math.round(tooltipItem.raw) + ' W'; }
                             }
                         },
                         legend: { display: true, position: 'top' }
@@ -124,96 +627,37 @@
                 }
             };
 
-            // If chart already exists, update it; otherwise, create it
             if (powerCurveChart) {
                 powerCurveChart.data.labels = labels;
                 powerCurveChart.data.datasets[0].data = dataPoints;
                 powerCurveChart.update();
-                console.log("Chart updated.");
             } else {
                 powerCurveChart = new Chart(ctx, chartConfig);
-                console.log("Chart created.");
             }
         }
 
-        // Function to display status/error messages
-        function setStatusMessage(message, isError = false) {
-            const statusElement = document.getElementById('statusMessage');
-            statusElement.textContent = message;
-            statusElement.className = `mt-4 text-center font-semibold ${isError ? 'text-red-600' : 'text-green-600'}`;
-        }
 
-        // Event listener for the button
-        document.getElementById('generateButton').addEventListener('click', async () => {
-            const startDate = document.getElementById('startDate').value;
-            const endDate = document.getElementById('endDate').value;
+        // --- Event Listeners ---
+        document.addEventListener('DOMContentLoaded', () => {
+            checkLoginStatus(); // Check status on page load
 
-            if (!startDate || !endDate) {
-                setStatusMessage('Please select both a start and end date.', true);
-                return;
-            }
+            showLoginButton.addEventListener('click', () => {
+                registerSection.classList.add('hidden');
+                loginSection.classList.remove('hidden');
+                setStatusMessage(loginStatusMessage, '', 'clear'); // Clear any previous messages
+            });
 
-            // Basic date validation: ensure start <= end
-            if (new Date(startDate) > new Date(endDate)) {
-                 setStatusMessage('Start date cannot be after end date.', true);
-                 return;
-            }
+            showRegisterButton.addEventListener('click', () => {
+                loginSection.classList.add('hidden');
+                registerSection.classList.remove('hidden');
+                 setStatusMessage(registerStatusMessage, '', 'clear'); // Clear any previous messages
+            });
 
-
-            setStatusMessage('Generating power curve...', false); // Show loading message
-            document.getElementById('generateButton').disabled = true; // Disable button during fetch
-
-            try {
-                const response = await fetch('/api/powercurve', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ startDate, endDate }),
-                });
-
-                const result = await response.json();
-
-                if (!response.ok) {
-                    // Handle HTTP errors (like 404, 500)
-                    throw new Error(result.error || `HTTP error! status: ${response.status}`);
-                }
-
-                // Check if the result object is empty (meaning no valid data)
-                if (Object.keys(result).length === 0) {
-                    setStatusMessage('No valid power data found for the selected date range.', true);
-                     // Optionally clear the chart if it exists
-                     if (powerCurveChart) {
-                         powerCurveChart.destroy();
-                         powerCurveChart = null;
-                         // Re-get context if needed for future charts
-                         // const ctx = document.getElementById('powerCurveChart').getContext('2d');
-                     }
-                } else {
-                   displayChart(result); // Display the chart with received data
-                }
-
-            } catch (error) {
-                console.error('Error fetching or processing power curve:', error);
-                setStatusMessage(`Error: ${error.message}`, true);
-                 // Optionally clear the chart on error
-                 if (powerCurveChart) {
-                     powerCurveChart.destroy();
-                     powerCurveChart = null;
-                 }
-            } finally {
-                 document.getElementById('generateButton').disabled = false; // Re-enable button
-            }
-        });
-
-         // Set default dates (e.g., start of year to today)
-         window.addEventListener('load', () => {
-            const today = new Date().toISOString().split('T')[0];
-            const startOfYear = new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0];
-            document.getElementById('startDate').value = startOfYear;
-            document.getElementById('endDate').value = today;
-            // Optionally trigger generation on load? Or wait for user click.
-            // document.getElementById('generateButton').click();
+            loginForm.addEventListener('submit', handleLogin);
+            registerForm.addEventListener('submit', handleRegister);
+            logoutButton.addEventListener('click', handleLogout);
+            uploadForm.addEventListener('submit', handleFileUpload);
+            generateButton.addEventListener('click', handleGeneratePowerCurve);
         });
 
     </script>
