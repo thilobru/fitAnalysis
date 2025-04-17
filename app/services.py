@@ -9,12 +9,11 @@ from datetime import datetime, timezone, date
 from typing import List, Dict, Optional, Any, Union
 from flask import current_app # Use current_app to access config safely
 
-# Import db instance if needed for helpers that interact with DB directly
-# from .extensions import db
-# Import models if needed
-# from .models import FitFile, User
+# Import db instance and models
+from .extensions import db
+from .models import FitFile, PowerCurvePoint # Import new model
 
-# Type Definitions (can also live in a central types file)
+# Type Definitions
 RecordData = Dict[str, Union[datetime, int, float, str, None]]
 PowerCurveData = Dict[int, float]
 
@@ -32,21 +31,17 @@ def _extract_activity_date(filepath: str) -> Optional[date]:
     try:
         with fitdecode.FitReader(filepath) as fit:
             for frame in fit:
-                # Check for file_id message type
                 if frame.frame_type == fitdecode.FIT_FRAME_DATA and frame.name == 'file_id':
-                    # Check if the 'time_created' field exists in this message
                     if frame.has_field('time_created'):
                         timestamp = frame.get_value('time_created')
-                        # Ensure it's a datetime object
                         if isinstance(timestamp, datetime):
-                             # Ensure timezone awareness (assume UTC if naive)
                              if timestamp.tzinfo is None:
                                  timestamp = timestamp.replace(tzinfo=timezone.utc)
                              else:
                                  timestamp = timestamp.astimezone(timezone.utc)
                              activity_date = timestamp.date()
                              logger.debug(f"Extracted date {activity_date} from {os.path.basename(filepath)}")
-                             break # Found the date, no need to process further frames
+                             break
             if not activity_date:
                  logger.warning(f"No 'time_created' field found in file_id message for {os.path.basename(filepath)}")
         return activity_date
@@ -59,7 +54,6 @@ def _extract_activity_date(filepath: str) -> Optional[date]:
 
 def _allowed_file(filename: str) -> bool:
     """Checks if the filename has an allowed extension."""
-    # Use ALLOWED_EXTENSIONS from app config
     allowed_extensions = current_app.config.get('ALLOWED_EXTENSIONS', {'.fit'})
     return '.' in filename and \
            os.path.splitext(filename)[1].lower() in allowed_extensions
@@ -67,7 +61,8 @@ def _allowed_file(filename: str) -> bool:
 # --- Power Curve Calculation Helpers ---
 
 def _perform_power_curve_calculation(records_data: List[RecordData]) -> Optional[PowerCurveData]:
-    """Performs the power curve calculation using pandas on aggregated records data."""
+    """Performs the power curve calculation using pandas on records data."""
+    # (Keep this function as is - it calculates the curve from a list of records)
     if not records_data:
         logger.warning("Internal: No records data provided to _perform_power_curve_calculation.")
         return {} # Return empty dict for no data
@@ -75,16 +70,13 @@ def _perform_power_curve_calculation(records_data: List[RecordData]) -> Optional
     max_average_power: PowerCurveData = {}
     logger.info(f"Starting power curve calculation on {len(records_data)} records.")
     try:
-        # Create DataFrame efficiently
         df = pd.DataFrame.from_records(records_data, columns=['timestamp', 'power'])
         logger.debug("DataFrame created.")
 
-        # Convert types, handling errors
         df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce', utc=True)
         df['power'] = pd.to_numeric(df['power'], errors='coerce')
         logger.debug("Types converted.")
 
-        # Drop invalid rows
         initial_rows = len(df)
         df = df.dropna(subset=['timestamp', 'power'])
         dropped_rows = initial_rows - len(df)
@@ -93,14 +85,12 @@ def _perform_power_curve_calculation(records_data: List[RecordData]) -> Optional
 
         if df.empty:
              logger.warning("Internal: Data invalid or empty after cleaning in _perform_power_curve_calculation.")
-             return {} # Return empty dict if no valid data remains
+             return {}
 
-        # Set index and sort (crucial and potentially time-consuming)
         logger.debug("Setting and sorting index...")
         df = df.set_index('timestamp').sort_index()
         logger.debug("Index set and sorted.")
 
-        # Define Power Curve Window Durations (in seconds)
         window_durations: List[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
                                        12, 15, 20, 30, 45,
                                        60, 75, 90, 120, 150, 180,
@@ -108,13 +98,10 @@ def _perform_power_curve_calculation(records_data: List[RecordData]) -> Optional
                                        1200, 1800, 2700, 3600, 5400]
 
         logger.debug(f"Calculating rolling means for {len(window_durations)} durations...")
-        # Pre-calculate rolling means for all durations if memory allows, might be faster
-        # Or calculate one by one
         for duration_sec in window_durations:
             window_str: str = f'{duration_sec}s'
-            # Ensure power column is float for mean calculation
             rolling_mean = df['power'].astype('float64').rolling(window_str, min_periods=1, closed='right').mean()
-            max_power = rolling_mean.max() # Find max average for this window duration
+            max_power = rolling_mean.max()
 
             if pd.notna(max_power):
                  max_average_power[duration_sec] = round(float(max_power), 1)
@@ -124,60 +111,120 @@ def _perform_power_curve_calculation(records_data: List[RecordData]) -> Optional
 
     except Exception as e:
         logger.error(f"Internal: An error occurred during pandas processing: {e}", exc_info=True)
-        return None # Return None on unexpected calculation errors
-
-
-def calculate_aggregate_power_curve(file_paths: List[str]) -> Optional[PowerCurveData]:
-    """Processes multiple FIT files, aggregates 'record' data, and calculates power curve."""
-    all_records_data: List[RecordData] = []
-    total_records_processed: int = 0
-    logger.info(f"Aggregating records from {len(file_paths)} files...")
-
-    for filepath in file_paths:
-        basename: str = os.path.basename(filepath)
-        if not os.path.isfile(filepath):
-            logger.warning(f"File not found during aggregation: {filepath}. Skipping.")
-            continue
-        try:
-            logger.debug(f"  Reading records from: {basename}")
-            with fitdecode.FitReader(filepath) as fit:
-                file_record_count: int = 0
-                for frame in fit:
-                    if frame.frame_type == fitdecode.FIT_FRAME_DATA and frame.name == 'record':
-                        # Use get_value for safer access, check types
-                        timestamp = frame.get_value('timestamp', fallback=None)
-                        power = frame.get_value('power', fallback=None)
-
-                        if isinstance(timestamp, datetime) and power is not None:
-                            try:
-                                numeric_power = float(power) # Ensure power is numeric
-                                all_records_data.append({'timestamp': timestamp, 'power': numeric_power})
-                                file_record_count += 1
-                            except (ValueError, TypeError):
-                                logger.debug(f"Invalid power value ({power}) in {basename}. Skipping record.")
-                        # else: logger.debug(f"Record missing timestamp or power in {basename}") # Too verbose potentially
-
-                logger.debug(f"    Found {file_record_count} valid records in {basename}.")
-                total_records_processed += file_record_count
-        except fitdecode.FitError as e:
-            logger.warning(f"Skipping {basename} due to FitError: {e}")
-        except Exception as e:
-            logger.error(f"Skipping {basename} due to unexpected Error: {e}", exc_info=True)
-
-    if not all_records_data:
-        logger.warning("No valid 'record' data found across selected files for aggregation.")
-        return None # Return None if no data was aggregated
-
-    logger.info(f"Total records aggregated: {total_records_processed}. Calculating final power curve...")
-    result = _perform_power_curve_calculation(all_records_data) # Call the pandas helper
-
-    if result is None:
-        logger.error("Power curve calculation failed (returned None).")
         return None
-    if not result: # Empty dict means calculation ran but yielded no points
-        logger.warning("Power curve calculation resulted in no data points.")
-        return None # Indicate no curve generated
 
-    logger.info("Power curve calculation complete.")
-    return result
+# --- NEW: Function to process a single file and save its power curve ---
+def calculate_and_save_single_file_power_curve(file_id: int) -> bool:
+    """
+    Calculates the power curve for a single FitFile, saves the results
+    to the PowerCurvePoint table, and updates the FitFile status.
 
+    Args:
+        file_id: The ID of the FitFile to process.
+
+    Returns:
+        True if processing was successful, False otherwise.
+    """
+    logger.info(f"Starting single file power curve calculation for FitFile ID: {file_id}")
+    fit_file = db.session.get(FitFile, file_id)
+
+    if not fit_file:
+        logger.error(f"FitFile ID {file_id} not found in database.")
+        return False
+
+    # Update status to 'processing'
+    fit_file.processing_status = 'processing'
+    db.session.add(fit_file)
+    db.session.commit() # Commit status change immediately
+
+    file_path = fit_file.get_full_path()
+    if not os.path.isfile(file_path):
+        logger.error(f"File not found on filesystem for FitFile ID {file_id}: {file_path}")
+        fit_file.processing_status = 'analysis_failed'
+        db.session.add(fit_file)
+        db.session.commit()
+        return False
+
+    records_data: List[RecordData] = []
+    try:
+        logger.debug(f"Reading records from: {fit_file.original_filename} (ID: {file_id})")
+        with fitdecode.FitReader(file_path) as fit:
+            for frame in fit:
+                if frame.frame_type == fitdecode.FIT_FRAME_DATA and frame.name == 'record':
+                    timestamp = frame.get_value('timestamp', fallback=None)
+                    power = frame.get_value('power', fallback=None)
+                    if isinstance(timestamp, datetime) and power is not None:
+                        try:
+                            numeric_power = float(power)
+                            records_data.append({'timestamp': timestamp, 'power': numeric_power})
+                        except (ValueError, TypeError):
+                            pass # Ignore invalid power values in single file processing
+
+        logger.debug(f"Found {len(records_data)} valid records for FitFile ID {file_id}.")
+
+        if not records_data:
+             logger.warning(f"No valid record data found in FitFile ID {file_id}. Marking as processed (empty).")
+             # Delete potentially existing old points if reprocessing
+             PowerCurvePoint.query.filter_by(fit_file_id=file_id).delete()
+             fit_file.processing_status = 'processed' # Mark as processed even if empty
+             db.session.add(fit_file)
+             db.session.commit()
+             return True # Technically successful, just no data
+
+        # Calculate power curve for this file's data
+        power_curve_data: Optional[PowerCurveData] = _perform_power_curve_calculation(records_data)
+
+        if power_curve_data is None: # Indicates an internal calculation error
+            raise Exception("Power curve calculation returned None, indicating an internal error.")
+        if not power_curve_data: # Empty dict means calculation ran but no points (e.g., <1s duration)
+             logger.warning(f"Power curve calculation resulted in no data points for FitFile ID {file_id}. Marking as processed.")
+             # Delete potentially existing old points if reprocessing
+             PowerCurvePoint.query.filter_by(fit_file_id=file_id).delete()
+             fit_file.processing_status = 'processed'
+             db.session.add(fit_file)
+             db.session.commit()
+             return True # Successful calculation, even if result is empty
+
+        # Save the calculated points to the database
+        # Delete potentially existing old points first (important if reprocessing)
+        PowerCurvePoint.query.filter_by(fit_file_id=file_id).delete()
+        logger.debug(f"Deleted old power curve points for FitFile ID {file_id} (if any).")
+
+        # Add new points
+        new_points = []
+        for duration, power in power_curve_data.items():
+            new_points.append(PowerCurvePoint(
+                fit_file_id=file_id,
+                duration_seconds=duration,
+                max_power_watts=power
+            ))
+
+        if new_points:
+            db.session.bulk_save_objects(new_points) # Efficiently add multiple points
+            logger.info(f"Saved {len(new_points)} power curve points for FitFile ID {file_id}.")
+
+        # Update status to 'processed'
+        fit_file.processing_status = 'processed'
+        db.session.add(fit_file)
+        db.session.commit()
+        logger.info(f"Successfully processed and saved power curve for FitFile ID: {file_id}")
+        return True
+
+    except fitdecode.FitError as fe:
+        db.session.rollback() # Rollback any partial saves
+        logger.error(f"FitDecodeError processing FitFile ID {file_id}: {fe}")
+        fit_file = db.session.get(FitFile, file_id) # Re-fetch after rollback
+        if fit_file:
+            fit_file.processing_status = 'analysis_failed'
+            db.session.add(fit_file)
+            db.session.commit()
+        return False
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Unexpected error processing FitFile ID {file_id}: {e}", exc_info=True)
+        fit_file = db.session.get(FitFile, file_id) # Re-fetch after rollback
+        if fit_file:
+            fit_file.processing_status = 'analysis_failed'
+            db.session.add(fit_file)
+            db.session.commit()
+        return False

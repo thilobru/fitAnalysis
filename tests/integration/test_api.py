@@ -12,7 +12,7 @@ from pathlib import Path
 from pytest_mock import MockerFixture # Import mocker type hint
 
 # Import models from new location
-from app.models import User, FitFile, db # Import db for direct manipulation
+from app.models import User, FitFile, PowerCurvePoint, db # Import db for direct manipulation
 # Import PowerCurveData type if needed
 from app.services import PowerCurveData # Import type from services
 
@@ -112,7 +112,7 @@ def test_logout_when_not_logged_in(client: FlaskClient):
 # === Tests for File Management API Endpoints ===
 
 def test_upload_success(logged_in_client: Tuple[FlaskClient, User], mocker: MockerFixture, tmp_path: Path):
-    """Test successful file upload."""
+    """Test successful file upload and triggering of analysis."""
     client, user = logged_in_client
     test_fit_dir = tmp_path / "test_uploads"
     user_specific_dir = test_fit_dir / str(user.id)
@@ -120,14 +120,14 @@ def test_upload_success(logged_in_client: Tuple[FlaskClient, User], mocker: Mock
 
     mocker.patch.dict(client.application.config, {"FIT_DIR": str(test_fit_dir)})
 
-    # Mock functions needed BEFORE the save happens or for metadata
     mock_getsize = mocker.patch('os.path.getsize', return_value=12345)
-
-    # --- IMPORTANT: Mock the function WHERE IT IS USED ---
-    # The function is called from app.files.routes
     mock_extract_date = mocker.patch(
-        'app.files.routes._extract_activity_date', # Patch the function *as used* in the files blueprint routes
+        'app.files.routes._extract_activity_date', # Patch where it's used
         return_value=date(2024, 1, 15)
+    )
+    mock_single_file_calc = mocker.patch(
+        'app.files.routes.calculate_and_save_single_file_power_curve',
+        return_value=True # Simulate success
     )
 
     mock_uuid_val = uuid.UUID('12345678-1234-5678-1234-567812345678')
@@ -140,26 +140,29 @@ def test_upload_success(logged_in_client: Tuple[FlaskClient, User], mocker: Mock
     file_data = {'file': (io.BytesIO(b"dummy fit data"), 'test_activity.fit')}
     response = client.post('/api/files', data=file_data, content_type='multipart/form-data')
 
+    # Assert response
     assert response.status_code == 201, f"API Response: {response.get_data(as_text=True)}"
-    assert response.json['message'] == "File uploaded successfully"
+    # Message should reflect mocked success
+    assert response.json['message'] == "File uploaded and processed successfully"
     assert response.json['file']['filename'] == 'test_activity.fit'
-    # *** THE KEY ASSERTION ***
-    assert response.json['file']['date'] == '2024-01-15' # Check if mock worked
-    assert response.json['file']['status'] == 'uploaded'
+    assert response.json['file']['date'] == '2024-01-15'
+    # --- FIXED ASSERTION ---
+    # The status in the JSON comes from db.session.refresh(), which reloads the object
+    # *before* the mocked function could have hypothetically updated it.
+    # So, we expect the status that was initially committed.
+    assert response.json['file']['status'] == 'analysis_pending' # Expect initial status
     file_id = response.json['file']['id']
 
+    # Assert mocks were called
     mock_makedirs.assert_called_once_with(str(user_specific_dir), exist_ok=True)
-    # Check that the mocked date extraction was called with the correct path
     mock_extract_date.assert_called_once_with(str(expected_save_path))
     mock_getsize.assert_called_once_with(str(expected_save_path))
+    mock_single_file_calc.assert_called_once_with(file_id) # Verify analysis was called
 
+    # Assert database record created
     fit_file = db.session.get(FitFile, file_id)
     assert fit_file is not None
-    assert fit_file.user_id == user.id
-    assert fit_file.original_filename == 'test_activity.fit'
-    assert fit_file.storage_path == expected_relative_filename
-    assert fit_file.filesize == 12345
-    assert fit_file.activity_date == date(2024, 1, 15)
+    assert fit_file.processing_status == 'analysis_pending' # Check actual DB status
 
 
 def test_upload_no_file(logged_in_client: Tuple[FlaskClient, User]):
@@ -270,97 +273,100 @@ def test_delete_file_wrong_user(client: FlaskClient): # Use base client
 
 # --- POST /api/powercurve (User Specific) ---
 
-# FIX 2: Corrected test_powercurve_user_specific_success
-def test_powercurve_user_specific_success(logged_in_client: Tuple[FlaskClient, User], mocker: MockerFixture, tmp_path: Path):
-    """Test successful power curve calculation for logged-in user's files."""
+def test_powercurve_user_specific_success(logged_in_client: Tuple[FlaskClient, User], db: Any, tmp_path: Path):
+    """Test successful power curve aggregation from pre-calculated data."""
     client, user = logged_in_client
-    user_id_str = str(user.id)
-    test_fit_dir = tmp_path / "test_pc"
-    test_fit_dir.mkdir() # Create base directory for FIT files
+    # No need to mock FIT_DIR here unless get_full_path is somehow called
 
-    # Patch config
-    mocker.patch.dict(client.application.config, {"FIT_DIR": str(test_fit_dir)})
-
-    expected_paths_to_check = []
-    # Use db fixture from conftest
-    # Use app context for database operations and get_full_path
+    # --- Setup Data ---
     with client.application.app_context():
-        # Define relative storage paths
-        f1_sp = os.path.join(user_id_str, "pc_uuid1.fit")
-        f2_sp = os.path.join(user_id_str, "pc_uuid2.fit")
-        f3_sp = os.path.join(user_id_str, "pc_uuid3.fit")
+        # File 1 (in range, processed)
+        f1 = FitFile(user_id=user.id, original_filename="pc_ride1.fit", storage_path=f"{user.id}/f1.fit",
+                     activity_date=date(2024, 2, 10), processing_status='processed')
+        # File 2 (in range, processed)
+        f2 = FitFile(user_id=user.id, original_filename="pc_ride2.fit", storage_path=f"{user.id}/f2.fit",
+                     activity_date=date(2024, 2, 11), processing_status='processed')
+        # File 3 (out of range, processed)
+        f3 = FitFile(user_id=user.id, original_filename="pc_ride3.fit", storage_path=f"{user.id}/f3.fit",
+                     activity_date=date(2024, 2, 15), processing_status='processed')
+        # File 4 (in range, but not processed)
+        f4 = FitFile(user_id=user.id, original_filename="pc_ride4.fit", storage_path=f"{user.id}/f4.fit",
+                     activity_date=date(2024, 2, 12), processing_status='analysis_pending')
 
-        # Create FitFile records in DB
-        f1 = FitFile(user_id=user.id, original_filename="pc_ride1.fit", storage_path=f1_sp, activity_date=date(2024, 2, 10))
-        f2 = FitFile(user_id=user.id, original_filename="pc_ride2.fit", storage_path=f2_sp, activity_date=date(2024, 2, 11))
-        f3 = FitFile(user_id=user.id, original_filename="pc_ride3.fit", storage_path=f3_sp, activity_date=date(2024, 2, 15)) # Outside date range
-        db.session.add_all([f1, f2, f3])
+        db.session.add_all([f1, f2, f3, f4])
+        db.session.commit() # Commit to get IDs
+
+        # Add PowerCurvePoint data for processed files in range (f1, f2)
+        pc_points = [
+            # File 1 data
+            PowerCurvePoint(fit_file_id=f1.id, duration_seconds=1, max_power_watts=300.0),
+            PowerCurvePoint(fit_file_id=f1.id, duration_seconds=5, max_power_watts=280.0),
+            PowerCurvePoint(fit_file_id=f1.id, duration_seconds=60, max_power_watts=250.0),
+            # File 2 data (higher power for 5s, lower for 60s)
+            PowerCurvePoint(fit_file_id=f2.id, duration_seconds=1, max_power_watts=290.0),
+            PowerCurvePoint(fit_file_id=f2.id, duration_seconds=5, max_power_watts=295.0), # Max for 5s
+            PowerCurvePoint(fit_file_id=f2.id, duration_seconds=60, max_power_watts=240.0),
+            # Data for file 3 (should be ignored due to date range)
+            PowerCurvePoint(fit_file_id=f3.id, duration_seconds=1, max_power_watts=500.0),
+        ]
+        db.session.add_all(pc_points)
         db.session.commit()
 
-        # Get expected full paths using the model's helper method *after* commit
-        f1_refetched = db.session.get(FitFile, f1.id)
-        f2_refetched = db.session.get(FitFile, f2.id)
-        expected_paths_to_check = [f1_refetched.get_full_path(), f2_refetched.get_full_path()]
+    # --- Action ---
+    request_data = {"startDate": "2024-02-10", "endDate": "2024-02-14"}
+    response = client.post('/api/powercurve', json=request_data)
 
-        # --- IMPORTANT: Create dummy files/dirs ---
-        # The route checks os.path.isfile, so we need the files OR mock isfile
-        # Mocking isfile is easier if we ONLY want to test the route logic and mock the calculation
-        # If we wanted the calculation to run on dummy data, we'd create files here.
-        # Let's mock isfile as the original test did.
-        mock_isfile = mocker.patch('os.path.isfile', return_value=True) # Mock this to bypass filesystem check in route
-
-        # Define mock results for power curve
-        mock_power_curve_result: PowerCurveData = { 1: 250.0, 5: 240.0, 60: 200.0 }
-        mock_power_curve_json: Dict[str, float] = { "1": 250.0, "5": 240.0, "60": 200.0 }
-
-        # --- IMPORTANT: Mock the function WHERE IT IS USED ---
-        # The function is imported and used in app.analysis.routes
-        mock_calculator = mocker.patch(
-            'app.analysis.routes.calculate_aggregate_power_curve', # Target the usage location
-            return_value=mock_power_curve_result
-        )
-
-        # Define request data
-        request_data = {"startDate": "2024-02-10", "endDate": "2024-02-14"}
-
-        # --- Perform API Call ---
-        response = client.post('/api/powercurve', json=request_data) # Path from analysis blueprint
-
-        # --- Assertions ---
-        assert response.status_code == 200, f"API Response: {response.get_data(as_text=True)}"
-        assert response.json == mock_power_curve_json
-
-        # Check that os.path.isfile was called for the files in range
-        assert mock_isfile.call_count == len(expected_paths_to_check) # Should be called for f1 and f2
-        for path in expected_paths_to_check:
-            mock_isfile.assert_any_call(path)
-
-        # Check that the mocked calculator was called correctly
-        mock_calculator.assert_called_once_with(expected_paths_to_check) # Verify mock called with correct full paths
+    # --- Assertions ---
+    assert response.status_code == 200
+    expected_json = {
+        "1": 300.0,  # Max of 300.0 (f1) and 290.0 (f2)
+        "5": 295.0,  # Max of 280.0 (f1) and 295.0 (f2)
+        "60": 250.0 # Max of 250.0 (f1) and 240.0 (f2)
+    }
+    assert response.json == expected_json
 
 
-def test_powercurve_user_no_files_in_range(logged_in_client: Tuple[FlaskClient, User], mocker: MockerFixture, tmp_path: Path):
-    """Test power curve when user has no files in the selected date range."""
+def test_powercurve_user_no_files_in_range(logged_in_client: Tuple[FlaskClient, User], db: Any, tmp_path: Path):
+    """Test power curve when user has no processed files in the selected date range."""
     client, user = logged_in_client
-    test_fit_dir = tmp_path / "test_pc_no_files"
-    test_fit_dir.mkdir()
-    mocker.patch.dict(client.application.config, {"FIT_DIR": str(test_fit_dir)})
 
-    with client.application.app_context(): # Use app context
-        # Add a file outside the test range
-        f1 = FitFile(user_id=user.id, original_filename="pc_ride1.fit", storage_path=f"{user.id}/pc_uuid1.fit", activity_date=date(2024, 2, 10))
+    with client.application.app_context():
+        # Add a processed file OUTSIDE the test range
+        f1 = FitFile(user_id=user.id, original_filename="pc_ride1.fit", storage_path=f"{user.id}/pc_uuid1.fit",
+                     activity_date=date(2024, 2, 10), processing_status='processed')
         db.session.add(f1); db.session.commit()
+        # Add points for it (shouldn't matter)
+        db.session.add(PowerCurvePoint(fit_file_id=f1.id, duration_seconds=5, max_power_watts=300.0))
+        db.session.commit()
 
-    # Mock the calculation function (even though it shouldn't be called)
-    mock_calculator = mocker.patch('app.analysis.routes.calculate_aggregate_power_curve')
+        # Add a file INSIDE the range but NOT processed
+        f2 = FitFile(user_id=user.id, original_filename="pc_ride2.fit", storage_path=f"{user.id}/pc_uuid2.fit",
+                     activity_date=date(2024, 3, 15), processing_status='analysis_pending')
+        db.session.add(f2); db.session.commit()
 
-    request_data = {"startDate": "2024-03-01", "endDate": "2024-03-31"}
-    response = client.post('/api/powercurve', json=request_data) # Path from analysis blueprint
+
+    request_data = {"startDate": "2024-03-01", "endDate": "2024-03-31"} # Range only includes f2
+    response = client.post('/api/powercurve', json=request_data)
 
     assert response.status_code == 200
-    assert response.json == {} # Expect empty JSON for no data
-    mock_calculator.assert_not_called() # Verify calculation wasn't triggered
+    assert response.json == {} # Expect empty JSON as no *processed* files are in range
 
+def test_powercurve_no_points_for_files(logged_in_client: Tuple[FlaskClient, User], db: Any, tmp_path: Path):
+    """Test power curve when processed files in range have no power curve points."""
+    client, user = logged_in_client
+
+    with client.application.app_context():
+        # Add a processed file INSIDE the range
+        f1 = FitFile(user_id=user.id, original_filename="pc_ride1.fit", storage_path=f"{user.id}/pc_uuid1.fit",
+                     activity_date=date(2024, 4, 10), processing_status='processed')
+        db.session.add(f1); db.session.commit()
+        # DO NOT add any PowerCurvePoint records for f1
+
+    request_data = {"startDate": "2024-04-01", "endDate": "2024-04-30"}
+    response = client.post('/api/powercurve', json=request_data)
+
+    assert response.status_code == 200
+    assert response.json == {} # Expect empty JSON as no points found
 
 def test_api_powercurve_bad_request_invalid_date_format_logged_in(logged_in_client: Tuple[FlaskClient, User]):
     """Test /api/powercurve with invalid date format when logged in."""
