@@ -30,7 +30,9 @@ ENV PYTHONUNBUFFERED=1 \
     FIT_ANALYZER_HOST=0.0.0.0 \
     FIT_ANALYZER_PORT=5000 \
     # Gunicorn specific settings (can also be set via CMD)
-    WORKERS=2
+    WORKERS=2 \
+    # Timeout for Gunicorn (in seconds)
+    TIMEOUT=180
 
 # Create a non-root user and group
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
