@@ -193,8 +193,8 @@ def test_power_curve_with_sub_2s_gaps_not_filled(records_with_sub_2s_gaps_not_fi
     assert result is not None
     assert result.get(1) == approx(200.0)
     assert result.get(2) == approx(200.0) 
-    assert result.get(3) == approx(200.0) 
-    assert result.get(4) == approx(200.0)
+    assert 3 not in result 
+    assert 4 not in result 
     assert 5 not in result # min_periods=5, only 4 points
 
 def test_power_curve_user_specific_2s_gaps_filled(records_user_specific_2s_gaps_filled: List[RecordData]):
