@@ -18,6 +18,35 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def register_cli_commands(app: Flask):
+    @app.cli.command("seed_dev_user")
+    def seed_dev_user_command():
+        """Creates a mock user 'thilo' with password 'password' for development."""
+        # Imports are here to ensure app context and to avoid circular dependencies
+        from .models import User
+        from .extensions import db
+
+        username_to_seed = 'thilo'
+        password_to_seed = 'password'
+
+        # Check if mock user exists
+        existing_user = db.session.execute(
+            db.select(User).filter_by(username=username_to_seed)
+        ).scalar_one_or_none()
+
+        if not existing_user:
+            new_user = User(username=username_to_seed)
+            new_user.set_password(password_to_seed)
+            db.session.add(new_user)
+            try:
+                db.session.commit()
+                print(f"Mock user '{username_to_seed}' created successfully.")
+            except Exception as e:
+                db.session.rollback()
+                print(f"Error creating mock user '{username_to_seed}': {e}")
+        else:
+            print(f"Mock user '{username_to_seed}' already exists.")
+
 def create_app(config_object=None) -> Flask:
     """Application factory function."""
     load_dotenv()
@@ -71,6 +100,14 @@ def create_app(config_object=None) -> Flask:
         try: os.makedirs(app.config['FIT_DIR'], exist_ok=True); logger.info(f"Created base directory: {app.config['FIT_DIR']}.")
         except OSError as e: logger.error(f"Could not create base FIT file directory: {e}.")
     else: logger.info(f"Using base FIT file directory: {app.config['FIT_DIR']}")
+
+    # --- Register CLI commands ---
+    # Make sure this is called after db has been initialized with the app
+    # and within the app context implicitly provided if this file is run directly or through flask run
+    # For CLI commands, they operate within an app context automatically when invoked.
+    with app.app_context(): # Ensures db operations have the necessary context
+        register_cli_commands(app)
+
 
     logger.info("Flask app created and configured successfully.")
     return app
