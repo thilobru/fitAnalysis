@@ -226,7 +226,6 @@
 
     <script>
         // --- DOM Elements ---
-        // (User status, login, register, file management elements - largely unchanged)
         const userStatusArea = document.getElementById('userStatusArea');
         const userInfo = document.getElementById('userInfo');
         const logoutButton = document.getElementById('logoutButton');
@@ -269,9 +268,9 @@
 
         // --- State Variables ---
         let powerCurveChart = null;
-        let current_user = { is_authenticated: false };
-        let plottedCurvesData = []; // Stores data for all curves on the chart
-        const chartColors = [ // Predefined colors for curves
+        let current_user = { is_authenticated: false }; // Global state for login status
+        let plottedCurvesData = []; 
+        const chartColors = [ 
             'rgb(75, 192, 192)', 'rgb(255, 99, 132)', 'rgb(54, 162, 235)',
             'rgb(255, 206, 86)', 'rgb(153, 102, 255)', 'rgb(255, 159, 64)',
             'rgb(123, 239, 178)', 'rgb(247, 159, 31)', 'rgb(106, 176, 76)', 'rgb(196, 229, 56)'
@@ -285,14 +284,13 @@
             return color;
         }
 
-        function formatDate(date) { // YYYY-MM-DD
+        function formatDate(date) { 
             return date.toISOString().split('T')[0];
         }
 
         function populateYearOptions() {
             const currentYear = new Date().getFullYear();
-            // Simple: last 5 years + current. For dynamic, an API call would be better.
-            for (let i = 0; i < 5; i++) {
+            for (let i = 0; i < 5; i++) { // Populate with last 5 years
                 const year = currentYear - i;
                 const option = document.createElement('option');
                 option.value = `year_${year}`;
@@ -308,61 +306,93 @@
             if (type === 'error') element.classList.add('status-error');
             else if (type === 'success') element.classList.add('status-success');
             else if (type === 'info') element.classList.add('status-info');
-            else element.textContent = '';
+            else element.textContent = ''; // Clear if type is 'clear' or invalid
         }
 
         // --- View Management ---
-        function showView(viewName) {
-            let viewToShow = viewElements[viewName];
-            if (!viewToShow) {
-                viewName = 'files'; 
-                viewToShow = viewElements.files;
+        function showView(viewNameParam) {
+            let effectiveViewName = viewNameParam;
+            let viewElementToShow = viewElements[effectiveViewName];
+
+            if (!viewElementToShow) {
+                console.warn(`View "${effectiveViewName}" not found. Defaulting to "files".`);
+                effectiveViewName = 'files';
+                viewElementToShow = viewElements.files; 
             }
-            Object.values(viewElements).forEach(view => view && view.classList.add('hidden'));
-            if (viewToShow) viewToShow.classList.remove('hidden');
-            window.location.hash = viewName;
+            
+            Object.values(viewElements).forEach(view => {
+                if (view) view.classList.add('hidden');
+            });
+
+            if (viewElementToShow) {
+                viewElementToShow.classList.remove('hidden');
+            } else {
+                console.error("Default view 'filesView' also not found.");
+                return; 
+            }
+
+            const currentHash = window.location.hash.substring(1);
+            if (currentHash !== effectiveViewName) {
+                window.location.hash = effectiveViewName;
+            }
+
             navButtons.forEach(button => {
-                const isActive = button.dataset.view === viewName;
+                const isActive = button.dataset.view === effectiveViewName;
                 button.classList.toggle('active', isActive);
                 button.classList.toggle('btn-primary', isActive);
                 button.classList.toggle('btn-secondary', !isActive);
             });
-            if (viewName === 'powercurve') { // When power curve view is shown
-                setDefaultDatesForCustomRange(); // Set defaults for custom range pickers
-                // populateYearOptions(); // Call if not already populated or needs refresh
+
+            if (effectiveViewName === 'powercurve') { 
+                setDefaultDatesForCustomRange(); 
             }
         }
 
         function handleRouteChange() {
-            if (!current_user.is_authenticated) return; // Only route if logged in
+            // This function is called on 'hashchange' and after login.
+            // It should only proceed to show a view if the user is authenticated.
+            if (!current_user.is_authenticated) {
+                // If not authenticated, ensure no main app views are shown.
+                // The updateUI function handles hiding mainNav and app views on logout.
+                return; 
+            }
             const hash = window.location.hash.substring(1);
-            showView(hash || 'files');
+            showView(hash || 'files'); // Default to 'files' view if hash is empty and user is logged in
         }
 
         // --- UI Update Functions ---
         function updateUI(isLoggedIn, username = null) {
-            current_user.is_authenticated = isLoggedIn;
+            current_user.is_authenticated = isLoggedIn; // Update global login state
+
+            // Toggle visibility of auth-related elements in the header
             userInfo.classList.toggle('hidden', !isLoggedIn);
-            if(isLoggedIn) userInfo.textContent = `Logged in as: ${username}`;
+            if (isLoggedIn) userInfo.textContent = `Logged in as: ${username}`;
             logoutButton.classList.toggle('hidden', !isLoggedIn);
             showLoginButton.classList.toggle('hidden', isLoggedIn);
             showRegisterButton.classList.toggle('hidden', isLoggedIn);
+
+            // Always hide login/register forms after this initial setup
             loginSection.classList.add('hidden');
             registerSection.classList.add('hidden');
-            mainNav.classList.toggle('hidden', !isLoggedIn);
+            
+            mainNav.classList.toggle('hidden', !isLoggedIn); // Show/hide main navigation
 
             if (isLoggedIn) {
-                handleRouteChange();
-                fetchAndDisplayFiles();
+                // User is now logged in, handle routing to the correct view
+                handleRouteChange(); // This will show the default view ('files') or current hash view
+                fetchAndDisplayFiles(); // Fetch files relevant to the logged-in user
             } else {
-                Object.values(viewElements).forEach(view => view && view.classList.add('hidden'));
+                // User is not logged in (or logged out)
+                Object.values(viewElements).forEach(view => view && view.classList.add('hidden')); // Hide all app views
                 if (powerCurveChart) {
                     powerCurveChart.destroy();
                     powerCurveChart = null;
                 }
-                plottedCurvesData = []; // Clear plotted data on logout
-                nextColorIndex = 0; // Reset color index
-                updatePlottedRangesUI(); // Clear the list of plotted ranges
+                plottedCurvesData = []; 
+                nextColorIndex = 0; 
+                updatePlottedRangesUI(); 
+                // Ensure login/register buttons are visible if no specific form is requested
+                // (Handled by showLoginButton/showRegisterButton toggles above)
             }
         }
         
@@ -374,7 +404,7 @@
         }
 
         function updatePlottedRangesUI() {
-            plottedRangesList.innerHTML = ''; // Clear existing items
+            plottedRangesList.innerHTML = ''; 
             if (plottedCurvesData.length === 0) {
                 plottedRangesList.appendChild(plottedRangesPlaceholder);
                 plottedRangesPlaceholder.classList.remove('hidden');
@@ -383,7 +413,6 @@
                 plottedCurvesData.forEach(curve => {
                     const div = document.createElement('div');
                     div.className = 'plotted-range-item text-sm';
-                    
                     const colorIndicator = document.createElement('span');
                     colorIndicator.style.display = 'inline-block';
                     colorIndicator.style.width = '12px';
@@ -391,15 +420,12 @@
                     colorIndicator.style.backgroundColor = curve.color;
                     colorIndicator.style.marginRight = '8px';
                     colorIndicator.style.borderRadius = '2px';
-
                     const textSpan = document.createElement('span');
                     textSpan.textContent = `${curve.label} (${curve.startDate} to ${curve.endDate})`;
-                    
                     const removeBtn = document.createElement('button');
                     removeBtn.textContent = 'Remove';
                     removeBtn.className = 'btn-danger text-xs px-2 py-1 ml-2';
                     removeBtn.onclick = () => removeCurveFromChart(curve.id);
-
                     div.appendChild(colorIndicator);
                     div.appendChild(textSpan);
                     div.appendChild(removeBtn);
@@ -432,7 +458,7 @@
                     label = 'Last 12 Months';
                     rangeId = 'last12months';
                     break;
-                default: // Handles 'year_YYYY' and 'custom'
+                default: 
                     if (rangeType.startsWith('year_')) {
                         const year = parseInt(rangeType.split('_')[1]);
                         startDate = `${year}-01-01`;
@@ -442,23 +468,13 @@
                     } else if (rangeType === 'custom') {
                         startDate = customStart;
                         endDate = customEnd;
-                        if (!startDate || !endDate) {
-                            setStatusMessage(powerCurveStatusMessage, 'Custom range requires start and end dates.', 'error');
-                            return;
-                        }
-                        if (new Date(startDate) > new Date(endDate)) {
-                            setStatusMessage(powerCurveStatusMessage, 'Start date cannot be after end date for custom range.', 'error');
-                            return;
-                        }
+                        if (!startDate || !endDate) { setStatusMessage(powerCurveStatusMessage, 'Custom range requires start and end dates.', 'error'); return; }
+                        if (new Date(startDate) > new Date(endDate)) { setStatusMessage(powerCurveStatusMessage, 'Start date cannot be after end date for custom range.', 'error'); return; }
                         label = `Custom: ${startDate} to ${endDate}`;
                         rangeId = `custom_${startDate}_${endDate}`;
-                    } else {
-                        setStatusMessage(powerCurveStatusMessage, 'Invalid range type selected.', 'error');
-                        return;
-                    }
+                    } else { setStatusMessage(powerCurveStatusMessage, 'Invalid range type selected.', 'error'); return; }
             }
 
-            // Prevent adding the exact same range ID multiple times
             if (plottedCurvesData.some(curve => curve.id === rangeId)) {
                 setStatusMessage(powerCurveStatusMessage, `Range "${label}" is already plotted.`, 'info');
                 return;
@@ -475,17 +491,11 @@
                     body: JSON.stringify({ startDate, endDate }),
                 });
                 const result = await response.json();
-
                 if (!response.ok) throw new Error(result.error || `HTTP error! Status: ${response.status}`);
-
                 if (Object.keys(result).length === 0) {
                     setStatusMessage(powerCurveStatusMessage, `No power data found for ${label}.`, 'info');
                 } else {
-                    plottedCurvesData.push({
-                        id: rangeId, label, startDate, endDate, 
-                        powerData: result, 
-                        color: getNextColor()
-                    });
+                    plottedCurvesData.push({ id: rangeId, label, startDate, endDate, powerData: result, color: getNextColor() });
                     updatePlottedRangesUI();
                     renderChart();
                     setStatusMessage(powerCurveStatusMessage, `Added ${label} to chart.`, 'success');
@@ -501,22 +511,19 @@
 
         function removeCurveFromChart(rangeId) {
             plottedCurvesData = plottedCurvesData.filter(curve => curve.id !== rangeId);
-            // If we remove a color, we might want to "recycle" it or just let nextColorIndex continue
-            // For simplicity, we'll let nextColorIndex continue. If many curves are added/removed,
-            // colors might repeat sooner than ideal. A more complex color management could be added.
             updatePlottedRangesUI();
             renderChart();
         }
 
         function clearAllCurves() {
             plottedCurvesData = [];
-            nextColorIndex = 0; // Reset color sequence
+            nextColorIndex = 0; 
             updatePlottedRangesUI();
-            if (powerCurveChart) { // Destroy and nullify if exists
+            if (powerCurveChart) { 
                 powerCurveChart.destroy();
                 powerCurveChart = null;
             }
-            renderChart(); // Will render an empty chart
+            renderChart(); 
             setStatusMessage(powerCurveStatusMessage, 'Chart cleared.', 'info');
         }
         
@@ -526,76 +533,46 @@
                 const sortedDurations = Object.keys(curve.powerData).map(Number).sort((a, b) => a - b);
                 const dataPoints = sortedDurations.map(duration => curve.powerData[duration.toString()]);
                 return {
-                    label: curve.label,
-                    data: dataPoints,
-                    borderColor: curve.color,
-                    backgroundColor: curve.color.replace('rgb(', 'rgba(').replace(')', ', 0.1)'), // Slight fill
-                    tension: 0.1,
-                    fill: plottedCurvesData.length === 1, // Only fill if it's a single curve for clarity
-                    pointRadius: 3,
-                    pointHoverRadius: 5,
-                    borderWidth: 2
+                    label: curve.label, data: dataPoints, borderColor: curve.color,
+                    backgroundColor: curve.color.replace('rgb(', 'rgba(').replace(')', ', 0.1)'), 
+                    tension: 0.1, fill: plottedCurvesData.length === 1, 
+                    pointRadius: 3, pointHoverRadius: 5, borderWidth: 2
                 };
             });
-
-            // Collect all unique durations from all datasets to form the x-axis labels
             const allDurations = new Set();
-            plottedCurvesData.forEach(curve => {
-                Object.keys(curve.powerData).forEach(duration => allDurations.add(Number(duration)));
-            });
+            plottedCurvesData.forEach(curve => { Object.keys(curve.powerData).forEach(duration => allDurations.add(Number(duration))); });
             const sortedUniqueDurations = Array.from(allDurations).sort((a, b) => a - b).map(String);
-
 
             if (powerCurveChart) {
                 powerCurveChart.data.labels = sortedUniqueDurations;
                 powerCurveChart.data.datasets = datasets;
                 powerCurveChart.update();
             } else {
-                if (datasets.length > 0) { // Only create chart if there's data
+                if (datasets.length > 0) { 
                     powerCurveChart = new Chart(ctx, {
                         type: 'line',
-                        data: {
-                            labels: sortedUniqueDurations,
-                            datasets: datasets,
-                        },
+                        data: { labels: sortedUniqueDurations, datasets: datasets, },
                         options: {
-                            responsive: true,
-                            maintainAspectRatio: false,
+                            responsive: true, maintainAspectRatio: false,
                             scales: {
                                 x: {
-                                    type: 'logarithmic',
-                                    title: { display: true, text: 'Duration (seconds)', font: { size: 14 } },
+                                    type: 'logarithmic', title: { display: true, text: 'Duration (seconds)', font: { size: 14 } },
                                     ticks: {
                                         callback: function(value, index, values) {
                                             const commonTicks = [1, 2, 3, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 300, 420, 600, 900, 1200, 1800, 2700, 3600, 5400];
                                             const numericValue = Number(this.getLabelForValue(value));
                                             if (commonTicks.includes(numericValue)) return numericValue + 's';
-                                            // Show powers of 10 if not too dense
                                             if (Math.log10(numericValue) % 1 === 0 && numericValue > 0) return numericValue + 's';
                                             return null;
                                         },
                                         autoSkip: false, maxRotation: 45, minRotation: 0
                                     }
                                 },
-                                y: {
-                                    beginAtZero: false,
-                                    title: { display: true, text: 'Max Average Power (watts)', font: { size: 14 } }
-                                }
+                                y: { beginAtZero: false, title: { display: true, text: 'Max Average Power (watts)', font: { size: 14 } } }
                             },
                             plugins: {
-                                tooltip: {
-                                    callbacks: {
-                                        title: function(tooltipItems) { return 'Duration: ' + tooltipItems[0].label + 's'; },
-                                        label: function(tooltipItem) { 
-                                            return `${tooltipItem.dataset.label}: ${Math.round(tooltipItem.raw)} W`;
-                                        }
-                                    }
-                                },
-                                legend: { 
-                                    display: true, 
-                                    position: 'top',
-                                    labels: { usePointStyle: true }
-                                }
+                                tooltip: { callbacks: { title: function(tooltipItems) { return 'Duration: ' + tooltipItems[0].label + 's'; }, label: function(tooltipItem) { return `${tooltipItem.dataset.label}: ${Math.round(tooltipItem.raw)} W`; } } },
+                                legend: { display: true, position: 'top', labels: { usePointStyle: true } }
                             }
                         }
                     });
@@ -603,83 +580,65 @@
             }
         }
 
-        // --- API Interaction Functions (existing ones like checkLoginStatus, handleLogin etc. are kept) ---
-        // (Assume checkLoginStatus, handleLogin, handleRegister, handleLogout, 
-        // fetchAndDisplayFiles, handleFileUpload, handleFileDelete are defined as before)
+        // --- API Interaction Functions ---
         async function checkLoginStatus() {
             try {
                 const response = await fetch('/api/status');
-                if (!response.ok) { console.warn(`Login status check failed: ${response.status}`); updateUI(false); return; }
+                if (!response.ok) { 
+                    console.warn(`Login status check failed: ${response.status}`);
+                    updateUI(false); // Assume logged out if status check fails
+                    return;
+                }
                 const data = await response.json();
                 updateUI(data.logged_in, data.user?.username);
-            } catch (error) { console.error('Error checking login status:', error); setStatusMessage(loginStatusMessage, 'Could not verify login status.', 'error'); updateUI(false); }
-        }
-        async function handleLogin(event) {
-            event.preventDefault(); setStatusMessage(loginStatusMessage, 'Logging in...', 'info');
-            const formData = new FormData(loginForm); const data = Object.fromEntries(formData.entries());
-            try {
-                const response = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-                const result = await response.json(); if (!response.ok) { throw new Error(result.error || `Login failed (status ${response.status})`); }
-                setStatusMessage(loginStatusMessage, 'Login successful!', 'success'); loginForm.reset();
-                setTimeout(() => { loginSection.classList.add('hidden'); setStatusMessage(loginStatusMessage, '', 'clear'); checkLoginStatus(); }, 1000);
-            } catch (error) { console.error('Login error:', error); setStatusMessage(loginStatusMessage, error.message, 'error'); }
-        }
-        async function handleRegister(event) {
-            event.preventDefault(); setStatusMessage(registerStatusMessage, 'Registering...', 'info');
-            const formData = new FormData(registerForm); const data = Object.fromEntries(formData.entries());
-            if (data.password.length < 6) { setStatusMessage(registerStatusMessage, 'Password must be at least 6 characters.', 'error'); return; }
-            if (data.username.length < 3) { setStatusMessage(registerStatusMessage, 'Username must be at least 3 characters.', 'error'); return; }
-            try {
-                const response = await fetch('/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-                const result = await response.json(); if (!response.ok) { throw new Error(result.error || `Registration failed (status ${response.status})`); }
-                setStatusMessage(registerStatusMessage, 'Registration successful! Please log in.', 'success'); registerForm.reset();
-                setTimeout(() => { registerSection.classList.add('hidden'); loginSection.classList.remove('hidden'); setStatusMessage(registerStatusMessage, '', 'clear'); }, 2000);
-            } catch (error) { console.error('Registration error:', error); setStatusMessage(registerStatusMessage, error.message, 'error'); }
-        }
-        async function handleLogout() {
-            try {
-                const response = await fetch('/api/logout', { method: 'POST' });
-                if (!response.ok) { console.warn(`Logout failed (status ${response.status}), assuming session expired.`); }
-                updateUI(false); window.location.hash = '';
-                [loginStatusMessage, registerStatusMessage, uploadStatusMessage, fileListStatusMessage, powerCurveStatusMessage, plottedRangesStatusMessage].forEach(el => setStatusMessage(el, '', 'clear'));
-            } catch (error) { console.error('Logout error:', error); updateUI(false); window.location.hash = ''; }
-        }
-        async function fetchAndDisplayFiles() {
-            setStatusMessage(fileListStatusMessage, 'Loading files...', 'info'); fileListContainer.innerHTML = ''; fileListPlaceholder.classList.add('hidden');
-            try {
-                const response = await fetch('/api/files');
-                if (!response.ok) { if (response.status === 401) { updateUI(false); setStatusMessage(loginStatusMessage, 'Session expired. Please log in again.', 'error'); loginSection.classList.remove('hidden'); return; } throw new Error(`Failed to fetch files (status ${response.status})`);}
-                const files = await response.json();
-                if (files.length === 0) { fileListContainer.appendChild(fileListPlaceholder); fileListPlaceholder.classList.remove('hidden'); setStatusMessage(fileListStatusMessage, '', 'clear'); }
-                else { files.forEach(file => { const div = document.createElement('div'); div.className = 'file-item'; const infoSpan = document.createElement('span'); infoSpan.textContent = `${file.filename} (${file.date || 'No date'}) - ${file.size_kb ? file.size_kb + ' KB' : 'N/A'}`; infoSpan.className = 'text-sm text-gray-700'; const deleteButton = document.createElement('button'); deleteButton.textContent = 'Delete'; deleteButton.className = 'btn-danger text-xs px-2 py-1 ml-2'; deleteButton.onclick = () => handleFileDelete(file.id, file.filename); div.appendChild(infoSpan); div.appendChild(deleteButton); fileListContainer.appendChild(div); }); setStatusMessage(fileListStatusMessage, '', 'clear'); }
-            } catch (error) { console.error('Error fetching files:', error); setStatusMessage(fileListStatusMessage, 'Could not load file list.', 'error'); if (!fileListContainer.contains(fileListPlaceholder)) { fileListContainer.appendChild(fileListPlaceholder); } fileListPlaceholder.classList.remove('hidden'); fileListPlaceholder.textContent = 'Error loading files.'; }
-        }
-        async function handleFileUpload(event) {
-            event.preventDefault(); const files = fileInput.files;
-            if (!files || files.length === 0) { setStatusMessage(uploadStatusMessage, 'Please select one or more files to upload.', 'error'); return; }
-            const uploadButtonRef = document.getElementById('uploadButton'); uploadButtonRef.disabled = true; let successCount = 0; let errorCount = 0; const totalFiles = files.length;
-            setStatusMessage(uploadStatusMessage, `Starting upload of ${totalFiles} file(s)...`, 'info');
-            const uploadPromises = [];
-            for (let i = 0; i < files.length; i++) { const file = files[i]; if (!file.name.toLowerCase().endsWith('.fit')) { console.warn(`Skipping non-FIT file: ${file.name}`); errorCount++; setStatusMessage(uploadStatusMessage, `Uploading ${i + 1}/${totalFiles}... Skipping non-FIT file: ${file.name}`, 'info'); continue; } const formData = new FormData(); formData.append('file', file); const uploadPromise = fetch('/api/files', { method: 'POST', body: formData, }).then(async response => { const result = await response.json().catch(() => ({})); if (!response.ok) { throw new Error(result.error || `Upload failed for ${file.name} (status ${response.status})`); } console.log(`Successfully uploaded ${file.name}`); successCount++; setStatusMessage(uploadStatusMessage, `Uploading ${i + 1}/${totalFiles}... Success: ${file.name}`, 'info'); return { success: true, filename: file.name }; }).catch(error => { console.error(`Upload error for ${file.name}:`, error); errorCount++; setStatusMessage(uploadStatusMessage, `Uploading ${i + 1}/${totalFiles}... Error: ${file.name}`, 'info'); return { success: false, filename: file.name, error: error.message }; }); uploadPromises.push(uploadPromise); }
-            await Promise.allSettled(uploadPromises);
-            let finalMessage = `Upload complete. ${successCount} succeeded, ${errorCount} failed/skipped.`; setStatusMessage(uploadStatusMessage, finalMessage, errorCount > 0 ? 'error' : 'success');
-            uploadForm.reset(); uploadButtonRef.disabled = false; fetchAndDisplayFiles();
-        }
-        async function handleFileDelete(fileId, filename) {
-            if (!confirm(`Are you sure you want to delete "${filename}"?`)) { return; }
-            setStatusMessage(fileListStatusMessage, `Deleting ${filename}...`, 'info');
-            try {
-                const response = await fetch(`/api/files/${fileId}`, { method: 'DELETE', }); const result = await response.json();
-                if (!response.ok) { throw new Error(result.error || `Deletion failed (status ${response.status})`); }
-                setStatusMessage(fileListStatusMessage, `File '${filename}' deleted.`, 'success'); fetchAndDisplayFiles();
-            } catch (error) { console.error('Delete error:', error); setStatusMessage(fileListStatusMessage, error.message, 'error'); }
+            } catch (error) {
+                console.error('Error checking login status:', error);
+                setStatusMessage(loginStatusMessage, 'Could not verify login status.', 'error');
+                updateUI(false); // Assume logged out on network error
+            }
         }
 
+        async function handleLogin(event) {
+            event.preventDefault();
+            setStatusMessage(loginStatusMessage, 'Logging in...', 'info');
+            const formData = new FormData(loginForm);
+            const data = Object.fromEntries(formData.entries());
+
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data),
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.error || `Login failed (status ${response.status})`);
+                }
+                // Login was successful on the backend
+                setStatusMessage(loginStatusMessage, 'Login successful!', 'success');
+                loginForm.reset();
+                // loginSection.classList.add('hidden'); // This is now handled by updateUI
+
+                // Directly update UI for logged-in state
+                updateUI(true, result.username); 
+
+            } catch (error) {
+                console.error('Login error:', error);
+                setStatusMessage(loginStatusMessage, error.message, 'error');
+                updateUI(false); // Ensure UI reflects logged-out state on login error
+            }
+        }
+        
+        async function handleRegister(e){e.preventDefault(),setStatusMessage(registerStatusMessage,"Registering...","info");const t=new FormData(registerForm),s=Object.fromEntries(t.entries());if(s.password.length<6)return void setStatusMessage(registerStatusMessage,"Password must be at least 6 characters.","error");if(s.username.length<3)return void setStatusMessage(registerStatusMessage,"Username must be at least 3 characters.","error");try{const e=await fetch("/api/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(s)}),t=await e.json();if(!e.ok)throw new Error(t.error||`Registration failed (status ${e.status})`);setStatusMessage(registerStatusMessage,"Registration successful! Please log in.","success"),registerForm.reset(),setTimeout(()=>{registerSection.classList.add("hidden"),loginSection.classList.remove("hidden"),setStatusMessage(registerStatusMessage,"","clear")},2e3)}catch(e){console.error("Registration error:",e),setStatusMessage(registerStatusMessage,e.message,"error")}}
+        async function handleLogout(){try{const e=await fetch("/api/logout",{method:"POST"});e.ok||console.warn(`Logout failed (status ${e.status}), assuming session expired.`)}catch(e){console.error("Logout error:",e)}finally{updateUI(!1),window.location.hash="",[loginStatusMessage,registerStatusMessage,uploadStatusMessage,fileListStatusMessage,powerCurveStatusMessage,plottedRangesStatusMessage].forEach(e=>setStatusMessage(e,"","clear"))}}
+        async function fetchAndDisplayFiles(){setStatusMessage(fileListStatusMessage,"Loading files...","info"),fileListContainer.innerHTML="",fileListPlaceholder.classList.add("hidden");try{const e=await fetch("/api/files");if(!e.ok){if(401===e.status)return updateUI(!1),setStatusMessage(loginStatusMessage,"Session expired. Please log in again.","error"),void loginSection.classList.remove("hidden");throw new Error(`Failed to fetch files (status ${e.status})`)}const t=await e.json();if(0===t.length)fileListContainer.appendChild(fileListPlaceholder),fileListPlaceholder.classList.remove("hidden"),setStatusMessage(fileListStatusMessage,"","clear");else{t.forEach(e=>{const t=document.createElement("div");t.className="file-item";const s=document.createElement("span");s.textContent=`${e.filename} (${e.date||"No date"}) - ${e.size_kb?e.size_kb+" KB":"N/A"}`,s.className="text-sm text-gray-700";const n=document.createElement("button");n.textContent="Delete",n.className="btn-danger text-xs px-2 py-1 ml-2",n.onclick=()=>handleFileDelete(e.id,e.filename),t.appendChild(s),t.appendChild(n),fileListContainer.appendChild(t)}),setStatusMessage(fileListStatusMessage,"","clear")}}catch(e){console.error("Error fetching files:",e),setStatusMessage(fileListStatusMessage,"Could not load file list.","error"),fileListContainer.contains(fileListPlaceholder)||fileListContainer.appendChild(fileListPlaceholder),fileListPlaceholder.classList.remove("hidden"),fileListPlaceholder.textContent="Error loading files."}}
+        async function handleFileUpload(e){e.preventDefault();const t=fileInput.files;if(!t||0===t.length)return void setStatusMessage(uploadStatusMessage,"Please select one or more files to upload.","error");const s=document.getElementById("uploadButton");s.disabled=!0;let n=0,o=0;const i=t.length;setStatusMessage(uploadStatusMessage,`Starting upload of ${i} file(s)...`,"info");const r=[];for(let e=0;e<i;e++){const i=t[e];if(!i.name.toLowerCase().endsWith(".fit")){console.warn(`Skipping non-FIT file: ${i.name}`),o++,setStatusMessage(uploadStatusMessage,`Uploading ${e+1}/${i /* Corrected from totalFiles which is not defined here */}... Skipping non-FIT file: ${i.name}`,"info");continue}const a=new FormData;a.append("file",i);const l=fetch("/api/files",{method:"POST",body:a}).then(async e=>{const t=await e.json().catch(()=>({}));if(!e.ok)throw new Error(t.error||`Upload failed for ${i.name} (status ${e.status})`);return console.log(`Successfully uploaded ${i.name}`),n++,setStatusMessage(uploadStatusMessage,`Uploading ${e+1}/${i /* Corrected */}... Success: ${i.name}`,"info"),{success:!0,filename:i.name}}).catch(e=>(console.error(`Upload error for ${i.name}:`,e),o++,setStatusMessage(uploadStatusMessage,`Uploading ${e+1}/${i /* Corrected */}... Error: ${i.name}`,"info"),{success:!1,filename:i.name,error:e.message}));r.push(l)}await Promise.allSettled(r);let a=`Upload complete. ${n} succeeded, ${o} failed/skipped.`;setStatusMessage(uploadStatusMessage,a,o>0?"error":"success"),uploadForm.reset(),s.disabled=!1,fetchAndDisplayFiles()}
+        async function handleFileDelete(e,t){if(!confirm(`Are you sure you want to delete "${t}"?`))return;setStatusMessage(fileListStatusMessage,`Deleting ${t}...`,"info");try{const s=await fetch(`/api/files/${e}`,{method:"DELETE"}),n=await s.json();if(!s.ok)throw new Error(n.error||`Deletion failed (status ${s.status})`);setStatusMessage(fileListStatusMessage,`File '${t}' deleted.`,"success"),fetchAndDisplayFiles()}catch(e){console.error("Delete error:",e),setStatusMessage(fileListStatusMessage,e.message,"error")}}
 
         // --- Event Listeners ---
         document.addEventListener('DOMContentLoaded', () => {
-            checkLoginStatus();
-            populateYearOptions(); // Populate year dropdown once on load
+            checkLoginStatus(); // Initial check on page load
+            populateYearOptions(); 
 
             showLoginButton.addEventListener('click', () => { registerSection.classList.add('hidden'); loginSection.classList.remove('hidden'); setStatusMessage(loginStatusMessage, '', 'clear'); });
             showRegisterButton.addEventListener('click', () => { loginSection.classList.add('hidden'); registerSection.classList.remove('hidden'); setStatusMessage(registerStatusMessage, '', 'clear'); });
@@ -688,7 +647,6 @@
             logoutButton.addEventListener('click', handleLogout);
             uploadForm.addEventListener('submit', handleFileUpload);
             
-            // Power Curve View Listeners
             addPremadeRangeButton.addEventListener('click', () => {
                 const selectedRangeType = premadeRangeSelect.value;
                 addRangeToChart(selectedRangeType);
@@ -699,6 +657,16 @@
             clearChartButton.addEventListener('click', clearAllCurves);
 
             window.addEventListener('hashchange', handleRouteChange);
+            
+            if (mainNav) {
+                 mainNav.addEventListener('click', (event) => {
+                    const targetButton = event.target.closest('button[data-view]');
+                    if (targetButton) {
+                        const viewName = targetButton.dataset.view;
+                        showView(viewName);
+                    }
+                });
+            }
         });
     </script>
 
